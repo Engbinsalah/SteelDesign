@@ -1,342 +1,207 @@
 import streamlit as st
 import re
 
-# --- CONFIGURATION ---
-st.set_page_config(page_title="STAAD Full Design Report", layout="wide")
+st.set_page_config(page_title="STAAD Detailed Report", layout="wide")
 
-# --- HELPER FUNCTIONS ---
+# --- 1. AISC 360-16 EQUATION LIBRARY ---
+# Maps STAAD references (Eq.X-Y) to LaTeX strings
+AISC_EQS = {
+    # Chapter D (Tension)
+    "EQ.D2-1": r"P_n = F_y A_g",
+    "EQ.D2-2": r"P_n = F_u A_e",
+    "EQ.D3-1": r"A_e = A_n U",
+    
+    # Chapter E (Compression)
+    "EQ.E3-1": r"P_n = F_{cr} A_g",
+    "EQ.E3-2": r"F_{cr} = 0.658^{\frac{F_y}{F_e}} F_y",
+    "EQ.E3-3": r"F_{cr} = 0.877 F_e",
+    "EQ.E3-4": r"F_e = \frac{\pi^2 E}{(L_c/r)^2}",
+    "EQ.E4-1": r"P_n = F_{cr} A_g",
+    "EQ.E4-2": r"F_e = \left( \frac{\pi^2 E C_w}{(L_{cz})^2} + G J \right) \frac{1}{I_x + I_y}",
+    
+    # Chapter F (Flexure)
+    "EQ.F2-1": r"M_n = M_p = F_y Z_x",
+    "EQ.F2-2": r"M_n = C_b [M_p - (M_p - 0.7 F_y S_x)(\frac{L_b - L_p}{L_r - L_p})] \le M_p",
+    "EQ.F2-3": r"M_n = F_{cr} S_x",
+    "EQ.F2-4": r"F_{cr} = \frac{C_b \pi^2 E}{(L_b/r_{ts})^2} \sqrt{1 + 0.078 \frac{J c}{S_x h_0} (L_b/r_{ts})^2}",
+    "EQ.F2-5": r"L_p = 1.76 r_y \sqrt{\frac{E}{F_y}}",
+    "EQ.F2-6": r"L_r = 1.95 r_{ts} \frac{E}{0.7 F_y} \sqrt{\frac{J c}{S_x h_0} + \sqrt{(\frac{J c}{S_x h_0})^2 + 6.76 (\frac{0.7 F_y}{E})^2}}",
+    "EQ.F2-7": r"r_{ts}^2 = \frac{\sqrt{I_y C_w}}{S_x}",
+    "EQ.F2-8A": r"c = 1", # Simplified for doubly symmetric
+    "EQ.F6-1": r"M_n = M_p = F_y Z_y \le 1.6 F_y S_y",
+    "EQ.F6-2": r"M_n = M_p - (M_p - 0.7 F_y S_y)(\frac{\lambda - \lambda_p}{\lambda_r - \lambda_p})",
+    "EQ.F3-1": r"M_n = M_p - (M_p - 0.7 F_y S_x)(\frac{\lambda - \lambda_p}{\lambda_r - \lambda_p})",
 
-def format_decimal(val_str):
-    """Converts scientific notation to clean decimal strings."""
+    # Chapter G (Shear)
+    "EQ.G2-1": r"V_n = 0.6 F_y A_w C_{v1}",
+    "EQ.G6-1": r"V_n = 0.6 F_y A_w C_{v2}",
+    "EQ.G2-9": r"C_v = 1.0", # Simplified logic often seen
+
+    # Chapter H (Interaction)
+    "EQ.H1-1A": r"\frac{P_r}{P_c} + \frac{8}{9} \left( \frac{M_{rx}}{M_{cx}} + \frac{M_{ry}}{M_{cy}} \right) \le 1.0",
+    "EQ.H1-1B": r"\frac{P_r}{2P_c} + \left( \frac{M_{rx}}{M_{cx}} + \frac{M_{ry}}{M_{cy}} \right) \le 1.0",
+}
+
+# --- 2. FORMATTING HELPERS ---
+def clean_num(val):
+    """Converts 1.234E+02 to 123.4"""
     try:
-        val_str = val_str.strip()
-        val = float(val_str)
-        if val.is_integer():
-            return f"{int(val)}"
-        # Format to 3 decimal places, strip trailing zeros
-        return f"{val:.3f}".rstrip('0').rstrip('.') if val != 0 else "0"
+        f = float(val)
+        if f.is_integer(): return f"{int(f)}"
+        if abs(f) < 0.001: return f"{f:.3e}" # Keep scientific for tiny numbers
+        return f"{f:.3f}".rstrip('0').rstrip('.')
     except:
-        return val_str
+        return val
 
-def tex_color(text, color):
-    """Wraps text in LaTeX color."""
-    return rf"\textcolor{{{color}}}{{{text}}}"
+def tex_val(sym, val, unit=""):
+    """Returns LaTeX string: sym = val unit"""
+    unit_str = rf"\text{{ {unit}}}" if unit else ""
+    # Make symbol latex friendly (escape underscores)
+    sym = sym.replace("_", r"\_")
+    return rf"{sym} = \textcolor{{green}}{{\mathbf{{{clean_num(val)}}}}}{unit_str}"
 
-def tex_val(label, val, unit="", color="black"):
-    """Creates a formatted variable = value unit string."""
-    val_clean = format_decimal(val)
-    unit_tex = rf"\text{{ {unit}}}" if unit else ""
-    # Escape underscores for LaTeX
-    label = label.replace("_", r"\_")
-    return rf"{label} = \textcolor{{{color}}}{{\mathbf{{{val_clean}}}}}{unit_tex}"
-
-# --- PARSING LOGIC ---
-
-def parse_staad_full(text):
-    """
-    Parses the text into a list of ordered blocks.
-    Returns: List of dicts {'type': '...', 'index': int, 'data': ...}
-    """
+# --- 3. PARSING LOGIC ---
+def parse_block_logic(text):
     blocks = []
-
-    # 1. SLENDERNESS BLOCK
-    # Pattern: Header -> Actual -> Allowable
-    slen_match = re.search(r"\|\s*COMPRESSION SLENDERNESS", text)
-    if slen_match:
-        # Look for the lines following the header
-        chunk = text[slen_match.end():]
-        actual = re.search(r"Actual Slenderness Ratio\s*:\s*([\d\.]+)", chunk)
-        allow = re.search(r"Allowable Slenderness Ratio\s*:\s*([\d\.]+)", chunk)
-        
-        if actual and allow:
-            blocks.append({
-                "type": "slenderness",
-                "index": slen_match.start(),
-                "data": {"actual": actual.group(1), "allow": allow.group(1)}
-            })
-
-    # 2. SECTION PROPERTIES
-    # Pattern: | Ag : val Axx : val ... |
-    prop_match = re.search(r"\|\s*SECTION PROPERTIES", text)
-    if prop_match:
-        start = prop_match.end()
-        end = text.find("|-------", start)
-        chunk = text[start:end]
-        
-        # Regex to find Key : Value pairs
-        props = re.findall(r"([A-Za-z0-9\+\-]+)\s*:\s*([-\d\.E\+]+)", chunk)
-        blocks.append({
-            "type": "properties",
-            "index": prop_match.start(),
-            "data": props # List of tuples (Key, Val)
-        })
-
-    # 3. MATERIAL PROPERTIES
-    mat_match = re.search(r"\|\s*MATERIAL PROPERTIES", text)
-    if mat_match:
-        start = mat_match.end()
-        end = text.find("|-------", start)
-        chunk = text[start:end]
-        props = re.findall(r"([A-Za-z]+)\s*:\s*([-\d\.E\+]+)", chunk)
-        blocks.append({
-            "type": "material",
-            "index": mat_match.start(),
-            "data": props
-        })
-
-    # 4. CLASSIFICATIONS (Compression & Flexure)
-    # These are tables with Flange/Web rows
-    for class_type in ["COMPRESSION CLASSIFICATION", "FLEXURE CLASSIFICATION"]:
-        c_match = re.search(rf"\|\s*{class_type}", text)
-        if c_match:
-            start = c_match.end()
-            end = text.find("|-------", start)
-            chunk = text[start:end]
-            
-            # Find Flange and Web rows
-            # Format: Flange: Status Val Val Val Case
-            rows = []
-            for element in ["Flange", "Web"]:
-                row_match = re.search(rf"{element}\s*:\s*(\w+)\s+([0-9\.]+)\s+([0-9\.N/A]+)\s+([0-9\.N/A]+)\s+([\w\.]+)", chunk)
-                if row_match:
-                    rows.append({
-                        "elm": element,
-                        "status": row_match.group(1),
-                        "lam": row_match.group(2),
-                        "lam_p": row_match.group(3),
-                        "lam_r": row_match.group(4),
-                        "case": row_match.group(5)
-                    })
-            
-            blocks.append({
-                "type": "classification",
-                "name": class_type.title(),
-                "index": c_match.start(),
-                "data": rows
-            })
-
-    # 5. DESIGN CHECKS (Standard Table Format)
-    # Pattern: | NAME | ... | DEMAND CAPACITY RATIO | ...
-    check_pattern = re.compile(r"\|\s+([A-Z0-9\-\s\(\)]+?)\s+\|\n.*\|.*DEMAND.*CAPACITY.*RATIO.*REFERENCE.*LOC\s+\|\n\|\s+([-\d\.E\+]+)\s+([-\d\.E\+]+)\s+([\d\.]+)\s+(Cl\.[\w\.\d\-]+|Eq\.[\w\.\d\-]+)")
     
-    inter_pattern = re.compile(r"\|\s+(.*?)\s+:\s+([A-Za-z0-9\.]+)\s+=\s+([-\d\.E\+]+)\s+([A-Za-z\-\^0-9]+)?\s+(.*)\|")
+    # We define a "Check Block" pattern
+    # It starts with | HEADER |
+    # Then has DEMAND/CAPACITY row
+    # Then has Intermediate Results
+    
+    # Split raw text by the dashed line preceding a Header
+    # Regex to find Check Headers: | CHECKS FOR ... | or just | COMPRESSION... |
+    
+    # Strategy: Find every occurrence of the DEMAND/CAPACITY pattern, 
+    # then scan backwards for the Title, and forwards for the intermediates.
+    
+    # 1. Find the Main Result Row (Demand/Cap/Ratio/Ref)
+    main_row_regex = re.compile(r"\|\s+([-\d\.E\+]+)\s+([-\d\.E\+]+)\s+([\d\.]+)\s+(Cl\.[\w\.\-]+|Eq\.[\w\.\-]+|Table[\w\.]+)?\s+([\d]+)\s+([\d\.]+)\s+\|")
+    
+    # 2. Find Intermediate Rows
+    # Format: | Description : Symbol = Value Unit Ref |
+    # Regex Groups: 1:Desc, 2:Sym, 3:Val, 4:Unit(Opt), 5:Ref(Opt)
+    inter_regex = re.compile(r"\|\s+(.*?)\s+:\s+([A-Za-z0-9/]+)\s+=\s+([-\d\.E\+]+)\s+([A-Za-z]+)?\s*([A-Za-z\.\-0-9]+)?\s*\|")
 
-    for match in check_pattern.finditer(text):
-        block_data = {
-            "name": match.group(1).strip(),
-            "demand": match.group(2),
-            "capacity": match.group(3),
-            "ratio": match.group(4),
-            "ref": match.group(5).strip(),
-            "intermediates": []
-        }
-        
-        # Intermediate Parser
-        start_idx = match.end()
-        end_idx = text.find("|----------------", start_idx)
-        if end_idx != -1:
-            chunk = text[start_idx:end_idx]
-            for i_match in inter_pattern.finditer(chunk):
-                block_data["intermediates"].append({
-                    "desc": i_match.group(1).strip(),
-                    "sym": i_match.group(2).strip(),
-                    "val": i_match.group(3),
-                    "unit": i_match.group(4).strip() if i_match.group(4) else "",
+    lines = text.split('\n')
+    
+    current_block = None
+    
+    for i, line in enumerate(lines):
+        # A. Check for Title (Line before a dashed line usually, or surrounded by pipes)
+        # Crude Title finder: Uppercase text inside pipes, no numbers
+        if re.match(r"\|\s+[A-Z\s\-]+\s+\|$", line):
+            if "DEMAND" not in line and "Intermediate" not in line:
+                # Close previous block if exists
+                if current_block: blocks.append(current_block)
+                current_block = {
+                    "title": line.strip("| ").strip(),
+                    "main": None,
+                    "intermediates": []
+                }
+                continue
+
+        # B. Check for Main Result Row
+        m = main_row_regex.search(line)
+        if m and current_block:
+            current_block["main"] = {
+                "demand": m.group(1),
+                "capacity": m.group(2),
+                "ratio": m.group(3),
+                "ref": m.group(4) if m.group(4) else ""
+            }
+            continue
+
+        # C. Check for Intermediate Rows
+        # Only parse intermediates if we are "inside" a block (after the title)
+        if current_block and "Intermediate Results" not in line and "----" not in line:
+            im = inter_regex.search(line)
+            if im:
+                current_block["intermediates"].append({
+                    "desc": im.group(1).strip(),
+                    "sym": im.group(2).strip(),
+                    "val": im.group(3),
+                    "unit": im.group(4) if im.group(4) else "",
+                    "ref": im.group(5) if im.group(5) else ""
                 })
 
-        blocks.append({
-            "type": "check",
-            "index": match.start(),
-            "data": block_data
-        })
-
-    # 6. INTERACTION CHECK (Special Format)
-    # Format: | COMBINED ... | RATIO CRITERIA ... | VAL REF ... |
-    # It lacks the "Demand / Capacity" headers in the main row usually
-    int_pattern = re.compile(r"\|\s+(COMBINED FORCES.*?)\s+\|\n.*\|.*RATIO.*CRITERIA.*LOC\s+\|\n\|\s+([\d\.]+)\s+(Eq\.[\w\.\-]+)")
-    
-    for match in int_pattern.finditer(text):
-        block_data = {
-            "name": match.group(1).strip(),
-            "demand": None, # Interaction doesn't always have single demand
-            "capacity": None,
-            "ratio": match.group(2),
-            "ref": match.group(3),
-            "intermediates": []
-        }
-        
-        start_idx = match.end()
-        end_idx = text.find("|----------------", start_idx)
-        if end_idx != -1:
-            chunk = text[start_idx:end_idx]
-            for i_match in inter_pattern.finditer(chunk):
-                block_data["intermediates"].append({
-                    "desc": i_match.group(1).strip(),
-                    "sym": i_match.group(2).strip(),
-                    "val": i_match.group(3),
-                    "unit": i_match.group(4).strip() if i_match.group(4) else "",
-                })
-        
-        blocks.append({
-            "type": "interaction",
-            "index": match.start(),
-            "data": block_data
-        })
-
-    # Sort all blocks by their appearance in the text
-    blocks.sort(key=lambda x: x['index'])
+    if current_block: blocks.append(current_block)
     return blocks
 
-# --- UI LAYOUT ---
+# --- 4. STREAMLIT UI ---
 
-st.markdown("## 🏗️ STAAD.Pro Detailed Calculation Sheet")
-st.markdown("*AISC 360-16 LRFD*")
+st.markdown("### 📘 STAAD Detailed Calculation Pad")
+st.markdown("_Showing all intermediate steps with AISC 360-16 References_")
 
 with st.sidebar:
-    st.header("Input")
-    raw_input = st.text_area("Paste Full STAAD Output:", height=600)
+    st.header("Input Data")
+    raw_input = st.text_area("Paste STAAD Output:", height=500)
 
 if raw_input:
-    # 0. HEADER INFO
-    # Parse Top Level info (Member, Forces)
-    mem = re.search(r"Member No:\s+(\d+)\s+Profile:\s+([\w\d]+)", raw_input)
-    status = re.search(r"Status:\s+(\w+)\s+Ratio:\s+([\d\.]+)", raw_input)
-    
-    # Header Metrics
-    st.divider()
-    c1, c2, c3, c4 = st.columns(4)
-    if mem:
-        c1.metric("Member No", mem.group(1))
-        c2.metric("Profile", mem.group(2))
-    if status:
-        s_color = "normal" if status.group(1) == "PASS" else "inverse"
-        c3.metric("Status", status.group(1), delta_color=s_color)
-        c4.metric("Max Ratio", status.group(2))
+    # Header Info
+    mem_match = re.search(r"Member No:\s+(\d+)\s+Profile:\s+([\w\d]+)", raw_input)
+    if mem_match:
+        c1, c2 = st.columns(2)
+        c1.metric("Member", mem_match.group(1))
+        c2.metric("Profile", mem_match.group(2))
     st.divider()
 
-    # PROCESS BLOCKS
-    blocks = parse_staad_full(raw_input)
+    # Parse
+    blocks = parse_block_logic(raw_input)
     
     for block in blocks:
-        
-        # --- A. SLENDERNESS ---
-        if block['type'] == 'slenderness':
-            with st.container():
-                st.subheader("📏 Compression Slenderness")
-                d = block['data']
-                actual = float(d['actual'])
-                allow = float(d['allow'])
-                
-                k1, k2 = st.columns(2)
-                k1.latex(tex_val(r"KL/r_{actual}", actual, "", "blue"))
-                k2.latex(tex_val(r"KL/r_{limit}", allow, "", "green"))
-                
-                # Visual Bar
-                st.progress(min(actual/allow, 1.0))
-                if actual > allow:
-                    st.error("Slenderness Limit Exceeded")
-                st.divider()
-
-        # --- B. PROPERTIES (Material or Section) ---
-        elif block['type'] in ['properties', 'material']:
-            with st.container():
-                title = "🧱 Section Properties" if block['type'] == 'properties' else "⚙️ Material Properties"
-                st.subheader(title)
-                
-                # Display in a grid
-                items = block['data']
-                cols = st.columns(4)
-                for i, (key, val) in enumerate(items):
-                    with cols[i % 4]:
-                        # Inputs are Green
-                        st.latex(tex_val(key, val, "", "green"))
-                st.divider()
-
-        # --- C. CLASSIFICATIONS ---
-        elif block['type'] == 'classification':
-            with st.container():
-                st.subheader(f"📋 {block['name']}")
-                
-                # Create a clean table for Classifications
-                # Header
-                h1, h2, h3, h4, h5 = st.columns([1, 1, 1, 1, 2])
-                h1.markdown("**Element**")
-                h2.markdown(r"$\lambda$")
-                h3.markdown(r"$\lambda_p$")
-                h4.markdown(r"$\lambda_r$")
-                h5.markdown("**Result**")
-                
-                for row in block['data']:
-                    c1, c2, c3, c4, c5 = st.columns([1, 1, 1, 1, 2])
-                    c1.write(row['elm'])
-                    c2.latex(tex_color(format_decimal(row['lam']), "blue"))
-                    c3.latex(tex_color(format_decimal(row['lam_p']), "green"))
-                    c4.latex(tex_color(format_decimal(row['lam_r']), "green"))
-                    
-                    res_color = "red" if "Slender" in row['status'] and "Non" not in row['status'] else "black"
-                    c5.markdown(f":{res_color}[{row['status']}] ({row['case']})")
-                st.divider()
-
-        # --- D. DESIGN CHECKS ---
-        elif block['type'] == 'check':
-            d = block['data']
+        # Filter out blocks that are just headers or empty
+        if not block['main'] and not block['intermediates']:
+            continue
             
-            with st.container():
-                st.markdown(f"#### {d['name']}")
-                st.caption(f"Ref: {d['ref']}")
+        with st.container():
+            # TITLE
+            st.markdown(f"#### {block['title']}")
+            
+            # MAIN RESULT ROW (If exists)
+            if block['main']:
+                m = block['main']
+                # Determine colors
+                r_val = float(m['ratio'])
+                r_color = "maroon" if r_val <= 1.0 else "red"
+                
+                # Create a summary box
+                cols = st.columns(4)
+                cols[0].markdown("**Reference**")
+                cols[0].caption(m['ref'])
+                
+                cols[1].markdown("**Demand ($P_u/M_u$)**")
+                cols[1].latex(rf"\textcolor{{blue}}{{{clean_num(m['demand'])}}}")
+                
+                cols[2].markdown("**Capacity ($\phi R_n$)**")
+                cols[2].latex(rf"\textcolor{{blue}}{{{clean_num(m['capacity'])}}}")
+                
+                cols[3].markdown("**Ratio**")
+                cols[3].latex(rf"\textcolor{{{r_color}}}{{\mathbf{{{m['ratio']}}}}}")
 
-                left, right = st.columns([2, 1])
+            # INTERMEDIATE DETAILS
+            if block['intermediates']:
+                st.markdown("---")
+                st.caption("Detailed Calculation Steps:")
                 
-                with left:
-                    # Intermediate Inputs (Green)
-                    if d['intermediates']:
-                        st.markdown("**Parameters:**")
-                        latex_str = r"\begin{aligned}"
-                        for var in d['intermediates']:
-                            latex_str += rf"& {var['sym']} = \textcolor{{green}}{{{format_decimal(var['val'])}}} \text{{ {var['unit']}}} \\"
-                        latex_str += r"\end{aligned}"
-                        st.latex(latex_str)
-                
-                with right:
-                    st.markdown("**Utilization:**")
-                    # Demand/Cap (Blue), Ratio (Maroon)
-                    dem = tex_color(format_decimal(d['demand']), "blue")
-                    cap = tex_color(format_decimal(d['capacity']), "blue")
-                    rat = tex_color(d['ratio'], "maroon" if float(d['ratio']) <= 1.0 else "red")
+                for step in block['intermediates']:
+                    # Grid Layout: Description | Value | Equation from Code
+                    c_desc, c_val, c_eq = st.columns([1.5, 1, 1.5])
                     
-                    st.latex(rf"\text{{Demand}} = {dem}")
-                    st.latex(rf"\text{{Capacity}} = {cap}")
-                    st.latex(rf"\text{{Ratio}} = \mathbf{{{rat}}}")
+                    # 1. Description
+                    c_desc.markdown(f"**{step['desc']}**")
+                    
+                    # 2. Value (Green)
+                    c_val.latex(tex_val(step['sym'], step['val'], step['unit']))
+                    
+                    # 3. Equation (Lookup from Ref)
+                    ref_key = step['ref'].upper()
+                    if ref_key in AISC_EQS:
+                        c_eq.latex(rf"\text{{{step['ref']}}}: \quad " + AISC_EQS[ref_key])
+                    elif step['ref']:
+                         c_eq.caption(f"Ref: {step['ref']}")
                 
-                st.divider()
-
-        # --- E. INTERACTION ---
-        elif block['type'] == 'interaction':
-            d = block['data']
-            with st.container():
-                st.markdown(f"#### {d['name']}")
-                st.caption(f"Ref: {d['ref']}")
-                
-                # Similar logic but Interaction often lacks single demand/cap
-                left, right = st.columns([2, 1])
-                
-                with left:
-                    if d['intermediates']:
-                        latex_str = r"\begin{aligned}"
-                        for var in d['intermediates']:
-                            # Distinguish inputs vs calculated capacities in interaction
-                            # Usually Pn/Mn in interaction are Capacities (Blue), but here listed as intermediates
-                            # We will keep green for consistency of "variables listed below"
-                            latex_str += rf"& {var['sym']} = \textcolor{{green}}{{{format_decimal(var['val'])}}} \text{{ {var['unit']}}} \\"
-                        latex_str += r"\end{aligned}"
-                        st.latex(latex_str)
-
-                with right:
-                    st.markdown("**Interaction Eq:**")
-                    rat = tex_color(d['ratio'], "maroon" if float(d['ratio']) <= 1.0 else "red")
-                    st.latex(rf"\text{{Result}} = \mathbf{{{rat}}}")
-
-                st.divider()
+            st.divider()
 
 else:
-    st.info("👈 Paste the STAAD output text in the sidebar.")
+    st.info("Paste your STAAD output in the sidebar to generate the detailed report.")
