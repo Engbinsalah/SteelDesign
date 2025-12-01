@@ -1,248 +1,219 @@
 import streamlit as st
 import re
 
-# --- HELPER: LaTeX Formatting ---
-def tex_val(val, color="black"):
-    """Wraps a value in LaTeX color and bold formatting."""
-    return rf"\textcolor{{{color}}}{{\mathbf{{{val}}}}}"
+# --- CONFIGURATION ---
+st.set_page_config(page_title="STAAD Calculation Sheet", layout="wide")
 
-# --- AISC 360-16 EQUATION MAPPING ---
-def get_aisc_explanation(check_name, ref, demand, capacity, ratio):
+# --- HELPER FUNCTIONS ---
+
+def format_decimal(val_str):
     """
-    Returns LaTeX strings with color-coded substitution.
-    Colors: Blue for Demand/Capacity, Maroon for Ratio.
+    Converts scientific notation strings (1.23E+02) to standard decimals (123.0).
+    Returns a string.
     """
-    check_name = check_name.upper().strip()
+    try:
+        val = float(val_str)
+        # Check if it's an integer effectively
+        if val.is_integer():
+            return f"{int(val)}"
+        # Otherwise show up to 4 decimal places, stripping trailing zeros
+        return f"{val:.4f}".rstrip('0').rstrip('.')
+    except:
+        return val_str
+
+def tex_color(text, color):
+    return rf"\textcolor{{{color}}}{{{text}}}"
+
+def get_aisc_equation(name, ref):
+    """
+    Returns the symbolic equation and the check inequality based on the check name.
+    """
+    name = name.upper()
     
-    # Format numbers for LaTeX
-    d_tex = tex_val(demand, "blue")
-    c_tex = tex_val(capacity, "blue")
-    r_tex = tex_val(f"{ratio:.3f}", "maroon")
+    # TENSION
+    if "TENSILE YIELDING" in name:
+        return r"P_n = F_y A_g", r"\frac{P_u}{\phi_t P_n} \leq 1.0"
+    if "TENSILE RUPTURE" in name:
+        return r"P_n = F_u A_e", r"\frac{P_u}{\phi_t P_n} \leq 1.0"
+    
+    # COMPRESSION
+    if "FLEXURAL BUCKLING" in name or "COMPRESSION" in name:
+        return r"P_n = F_{cr} A_g", r"\frac{P_u}{\phi_c P_n} \leq 1.0"
+    if "FLEXURAL-TORSIONAL" in name:
+        return r"P_n = F_{cr_{ft}} A_g", r"\frac{P_u}{\phi_c P_n} \leq 1.0"
+    
+    # SHEAR
+    if "SHEAR" in name:
+        return r"V_n = 0.6 F_y A_w C_v", r"\frac{V_u}{\phi_v V_n} \leq 1.0"
+    
+    # FLEXURE
+    if "FLEXURAL YIELDING" in name:
+        return r"M_n = M_p = F_y Z", r"\frac{M_u}{\phi_b M_n} \leq 1.0"
+    if "LAT TOR BUCK" in name:
+        return r"M_n = C_b [M_p - (M_p - 0.7F_y S_x)(\dots)]", r"\frac{M_u}{\phi_b M_n} \leq 1.0"
+    if "FLANGE LOCAL" in name:
+        return r"\text{Local Buckling Check}", r"\frac{M_u}{\phi_b M_n} \leq 1.0"
+        
+    # INTERACTION
+    if "COMBINED" in name or "INTERACTION" in name:
+        if "H1-1A" in ref.upper():
+            return r"\frac{P_r}{P_c} + \frac{8}{9}\left(\frac{M_{rx}}{M_{cx}} + \frac{M_{ry}}{M_{cy}}\right)", r"\text{Interaction} \leq 1.0"
+        return r"\frac{P_r}{2P_c} + \left(\frac{M_{rx}}{M_{cx}} + \frac{M_{ry}}{M_{cy}}\right)", r"\text{Interaction} \leq 1.0"
 
-    # 1. TENSION (Chapter D)
-    if "TENSILE YIELDING" in check_name:
-        return {
-            "eq": r"P_n = F_y A_g \quad \text{(Eq. D2-1)}",
-            "check": r"\frac{P_u}{\phi_t P_n} \leq 1.0",
-            "sub": rf"\frac{{{d_tex}}}{{{c_tex}}} = {r_tex}"
-        }
-    elif "TENSILE RUPTURE" in check_name:
-        return {
-            "eq": r"P_n = F_u A_e \quad \text{(Eq. D2-2)}",
-            "check": r"\frac{P_u}{\phi_t P_n} \leq 1.0",
-            "sub": rf"\frac{{{d_tex}}}{{{c_tex}}} = {r_tex}"
-        }
+    # Default
+    return r"\text{Capacity Calculation}", r"\text{Demand} \le \text{Capacity}"
 
-    # 2. COMPRESSION (Chapter E)
-    elif "FLEXURAL BUCKLING" in check_name:
-        return {
-            "eq": r"P_n = F_{cr} A_g \quad \text{(Eq. E3-1)}",
-            "check": r"\frac{P_u}{\phi_c P_n} \leq 1.0",
-            "sub": rf"\frac{{{d_tex}}}{{{c_tex}}} = {r_tex}"
-        }
-    elif "FLEXURAL-TORSIONAL" in check_name:
-        return {
-            "eq": r"P_n = F_{cr} A_g \quad \text{(Eq. E4-1)}",
-            "check": r"\frac{P_u}{\phi_c P_n} \leq 1.0",
-            "sub": rf"\frac{{{d_tex}}}{{{c_tex}}} = {r_tex}"
-        }
+# --- PARSING LOGIC ---
 
-    # 3. FLEXURE (Chapter F)
-    elif "FLEXURAL YIELDING" in check_name:
-        return {
-            "eq": r"M_n = M_p = F_y Z_x \quad \text{(Eq. F2-1)}",
-            "check": r"\frac{M_u}{\phi_b M_n} \leq 1.0",
-            "sub": rf"\frac{{{d_tex}}}{{{c_tex}}} = {r_tex}"
-        }
-    elif "LAT TOR BUCK" in check_name: # Lateral Torsional Buckling
-        return {
-            "eq": r"M_n = C_b [ M_p - (M_p - 0.7 F_y S_x) (\dots) ] \le M_p",
-            "check": r"\frac{M_u}{\phi_b M_n} \leq 1.0",
-            "sub": rf"\frac{{{d_tex}}}{{{c_tex}}} = {r_tex}"
-        }
-    elif "FLANGE LOCAL BUCK" in check_name:
-        return {
-            "eq": r"\text{Check Compactness } (\lambda = b/t)",
-            "check": r"\frac{M_u}{\phi_b M_n} \leq 1.0",
-            "sub": rf"\frac{{{d_tex}}}{{{c_tex}}} = {r_tex}"
-        }
-
-    # 4. SHEAR (Chapter G)
-    elif "SHEAR" in check_name:
-        return {
-            "eq": r"V_n = 0.6 F_y A_w C_{v1} \quad \text{(Eq. G2-1)}",
-            "check": r"\frac{V_u}{\phi_v V_n} \leq 1.0",
-            "sub": rf"\frac{{{d_tex}}}{{{c_tex}}} = {r_tex}"
-        }
-
-    # 5. INTERACTION (Chapter H)
-    elif "COMBINED" in check_name or "INTERACTION" in check_name:
-        if "H1-1a" in ref:
-            return {
-                "eq": r"\frac{P_r}{P_c} + \frac{8}{9} (\dots) \leq 1.0 \quad \text{(Eq. H1-1a)}",
-                "check": r"\text{Interaction Check } (P_r/P_c \ge 0.2)",
-                "sub": rf"{r_tex} \leq 1.0"
-            }
-        else: # Default to H1-1b
-            return {
-                "eq": r"\frac{P_r}{2P_c} + \left( \frac{M_{rx}}{M_{cx}} + \frac{M_{ry}}{M_{cy}} \right) \leq 1.0 \quad \text{(Eq. H1-1b)}",
-                "check": r"\text{Interaction Check } (P_r/P_c < 0.2)",
-                "sub": rf"{r_tex} \leq 1.0"
-            }
-
-    # Default fallback
-    return {
-        "eq": r"\text{AISC 360-16 Code Provision}",
-        "check": r"\frac{\text{Demand}}{\text{Capacity}} \leq 1.0",
-        "sub": rf"\frac{{{d_tex}}}{{{c_tex}}} = {r_tex}"
+def parse_staad_ordered(text):
+    data = {
+        "header": {},
+        "blocks": []
     }
 
-# --- PARSING LOGIC (Preserved) ---
-def parse_staad_deep(text):
-    data = {"header": {}, "properties": {}, "material": {}, "checks": []}
-
-    mem_match = re.search(r"Member No:\s+(\d+)\s+Profile:\s+([\w\d]+)", text)
-    if mem_match:
-        data["header"]["member"] = mem_match.group(1)
-        data["header"]["profile"] = mem_match.group(2)
-        
-    gov_match = re.search(r"Status:\s+(\w+)\s+Ratio:\s+([\d\.]+)\s+.*Ref:\s+(.*)", text)
-    if gov_match:
-        data["header"]["status"] = gov_match.group(1)
-        data["header"]["max_ratio"] = float(gov_match.group(2))
-        data["header"]["gov_ref"] = gov_match.group(3).strip()
-
-    check_blocks = re.split(r"\|\s*CHECKS FOR ", text)
-    prop_block = check_blocks[0]
+    # 1. Header Extraction
+    mem = re.search(r"Member No:\s+(\d+)\s+Profile:\s+([\w\d]+)", text)
+    if mem:
+        data["header"]["id"] = mem.group(1)
+        data["header"]["profile"] = mem.group(2)
     
-    fy_match = re.search(r"Fyld:\s+([\d\.]+)", prop_block)
-    if fy_match: data["material"]["Fy"] = fy_match.group(1)
+    status = re.search(r"Status:\s+(\w+)\s+Ratio:\s+([\d\.]+)", text)
+    if status:
+        data["header"]["status"] = status.group(1)
+        data["header"]["ratio"] = status.group(2)
+
+    # 2. Sequential Block Extraction
+    # We look for the "Table Header" of a check (Name, Demand, Capacity...)
+    # Regex Breakdown:
+    # 1. Name inside pipes
+    # 2. Skip headers
+    # 3. Capture Demand, Capacity, Ratio, Ref
     
-    area_match = re.search(r"Ag\s*:\s*([\d\.E\+\-]+)", prop_block)
-    if area_match: data["properties"]["Ag"] = area_match.group(1)
+    check_pattern = re.compile(r"\|\s+([A-Z0-9\-\s\(\)]+?)\s+\|\n.*\|.*DEMAND.*CAPACITY.*RATIO.*REFERENCE.*LOC\s+\|\n\|\s+([-\d\.E\+]+)\s+([-\d\.E\+]+)\s+([\d\.]+)\s+(Cl\.[\w\.\d\-]+|Eq\.[\w\.\d\-]+)")
+    
+    # Intermediate Variable Pattern
+    # Matches: | Description : Symbol = Value Unit Ref |
+    inter_pattern = re.compile(r"\|\s+(.*?)\s+:\s+([A-Za-z0-9\.]+)\s+=\s+([-\d\.E\+]+)\s+([A-Za-z\-\^0-9]+)?\s+(.*)\|")
 
-    regex_check = re.compile(r"\|\s+([A-Z0-9\-\s\(\)]+?)\s+\|\n.*\|.*DEMAND.*CAPACITY.*RATIO.*REFERENCE.*LOC\s+\|\n\|\s+([-\d\.E\+]+)\s+([-\d\.E\+]+)\s+([\d\.]+)\s+(Cl\.[\w\.\d\-]+|Eq\.[\w\.\d\-]+)")
-    intermediate_regex = re.compile(r"\|\s+(.*?)\s+:\s+([A-Za-z0-9]+)\s+=\s+([-\d\.E\+]+)\s+([A-Za-z\-\^0-9]+)?\s+(.*)\|")
+    # Use finditer to preserve order
+    for match in check_pattern.finditer(text):
+        block = {
+            "name": match.group(1).strip(),
+            "demand": format_decimal(match.group(2)),
+            "capacity": format_decimal(match.group(3)),
+            "ratio": match.group(4),
+            "ref": match.group(5).strip(),
+            "intermediates": []
+        }
 
-    for match in regex_check.finditer(text):
-        c_name = match.group(1).strip()
-        c_dem = float(match.group(2))
-        c_cap = float(match.group(3))
-        c_rat = float(match.group(4))
-        c_ref = match.group(5).strip()
+        # Look for intermediate results immediately following this match
+        # Start searching from the end of the check row
+        start_idx = match.end()
+        # Find the next separator line (end of this block)
+        end_idx = text.find("|----------------", start_idx)
         
-        cat = "Other"
-        if "SHEAR" in c_name: cat = "Shear (Chapter G)"
-        elif "BENDING" in c_name or "FLEXURAL YIELDING" in c_name or "LAT TOR" in c_name or "FLANGE LOCAL" in c_name: cat = "Flexure (Chapter F)"
-        elif "COMPRESSION" in c_name or "BUCKLING" in c_name: cat = "Compression (Chapter E)"
-        elif "TENSION" in c_name or "TENSILE" in c_name: cat = "Tension (Chapter D)"
-        elif "COMBINED" in c_name or "INTERACTION" in c_name: cat = "Interaction (Chapter H)"
-
-        start_index = match.end()
-        end_index = text.find("|----------------", start_index)
-        sub_text = text[start_index:end_index]
+        if end_idx != -1:
+            chunk = text[start_idx:end_idx]
+            for i_match in inter_pattern.finditer(chunk):
+                block["intermediates"].append({
+                    "desc": i_match.group(1).strip(),
+                    "sym": i_match.group(2).strip(),
+                    "val": format_decimal(i_match.group(3)),
+                    "unit": i_match.group(4).strip() if i_match.group(4) else "",
+                    "ref": i_match.group(5).strip()
+                })
         
-        intermediates = []
-        for imatch in intermediate_regex.finditer(sub_text):
-            val_clean = imatch.group(3).strip()
-            # Clean scientific notation for nicer latex (E+00 -> )
-            try:
-                f_val = float(val_clean)
-                if abs(f_val) < 0.001 or abs(f_val) > 10000:
-                    val_clean = f"{f_val:.3e}"
-                else:
-                    val_clean = f"{f_val:.3f}"
-            except:
-                pass
-                
-            intermediates.append({
-                "symbol": imatch.group(2).strip(),
-                "value": val_clean,
-                "unit": imatch.group(4).strip() if imatch.group(4) else ""
-            })
+        data["blocks"].append(block)
 
-        data["checks"].append({
-            "name": c_name,
-            "category": cat,
-            "demand": c_dem,
-            "capacity": c_cap,
-            "ratio": c_rat,
-            "ref": c_ref,
-            "intermediates": intermediates
-        })
-        
     return data
 
-# --- STREAMLIT UI ---
-st.set_page_config(page_title="STAAD Calc Sheet", layout="centered")
+# --- UI LAYOUT ---
 
-st.markdown("## 🏗️ Structural Calculation Sheet")
-st.markdown("*AISC 360-16 LRFD Specification*")
+st.markdown("## 📐 AISC 360-16 Design Calculation")
+st.markdown("Based on STAAD.Pro Connect Edition Output")
 
-with st.expander("📥 Input Data (Paste STAAD Output)", expanded=True):
-    raw_input = st.text_area("Raw Text", height=200, help="Paste from 'Member No' to end of checks.")
+with st.sidebar:
+    st.header("Input")
+    raw_input = st.text_area("Paste STAAD Output:", height=400)
 
 if raw_input:
-    try:
-        data = parse_staad_deep(raw_input)
-        
-        # 1. Header Summary
-        st.divider()
-        c1, c2, c3 = st.columns(3)
-        c1.markdown(f"**Member:** `{data['header'].get('member','?')}`")
-        c1.markdown(f"**Profile:** `{data['header'].get('profile','?')}`")
-        
-        c2.markdown(f"**Material:** $F_y = {data['material'].get('Fy','?')} ksi$")
-        c2.markdown(f"**Area:** $A_g = {data['properties'].get('Ag','?')} in^2$")
+    # Parse
+    results = parse_staad_ordered(raw_input)
+    
+    # Header Display
+    h = results["header"]
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Member", h.get('id', '-'))
+    c2.metric("Profile", h.get('profile', '-'))
+    
+    status = h.get('status', 'FAIL')
+    ratio = h.get('ratio', '0.0')
+    delta_color = "normal" if status == "PASS" else "inverse"
+    c3.metric("Governing Ratio", ratio, status, delta_color=delta_color)
 
-        gov_ratio = data['header'].get('max_ratio', 0)
-        status = data['header'].get('status', 'UNKNOWN')
-        
-        # Header Color Logic
-        status_tex = r"\textcolor{green}{PASS}" if status == "PASS" else r"\textcolor{red}{FAIL}"
-        ratio_tex = tex_val(f"{gov_ratio}", "maroon")
-        
-        c3.latex(rf"\text{{Status: }} {status_tex}")
-        c3.latex(rf"\text{{Gov. Ratio: }} {ratio_tex}")
-        st.divider()
+    st.divider()
 
-        # 2. Render Calculations
-        sort_order = ["Tension (Chapter D)", "Compression (Chapter E)", "Flexure (Chapter F)", "Shear (Chapter G)", "Interaction (Chapter H)"]
-        present_cats = sorted(list(set(c['category'] for c in data['checks'])), key=lambda x: sort_order.index(x) if x in sort_order else 99)
+    # Iterate strictly in order found in text
+    for i, block in enumerate(results["blocks"]):
+        
+        # Determine styling
+        is_fail = float(block['ratio']) > 1.0
+        ratio_color = "red" if is_fail else "maroon"
+        
+        with st.container():
+            # Title Row
+            st.subheader(f"{i+1}. {block['name']}")
+            st.caption(f"Reference: {block['ref']}")
 
-        for cat in present_cats:
-            st.markdown(f"### {cat}")
+            col_eq, col_calc = st.columns([1.5, 1])
+
+            # 1. Intermediates (Green Inputs) & Equation
+            with col_eq:
+                st.markdown("**Variables:**")
+                
+                # Format intermediates as a Latex Array for alignment
+                if block['intermediates']:
+                    # We build a LaTeX align block
+                    latex_vars = r"\begin{aligned}"
+                    for var in block['intermediates']:
+                        # Green for Input Values
+                        val_display = tex_color(var['val'], "green")
+                        unit_display = f"\\text{{ {var['unit']}}}" if var['unit'] else ""
+                        # Escape underscore in symbols for latex
+                        sym_display = var['sym'].replace("_", "\_")
+                        
+                        latex_vars += rf"& {sym_display} = {val_display} {unit_display} && \text{{\small ({var['desc']})}} \\"
+                    latex_vars += r"\end{aligned}"
+                    st.latex(latex_vars)
+                else:
+                    st.text("No intermediate variables listed.")
+
+                # Symbolic Equation
+                eq_sym, eq_check = get_aisc_equation(block['name'], block['ref'])
+                st.markdown("**Governing Equation:**")
+                st.latex(eq_sym)
+
+            # 2. Final Substitution (Blue Calc / Maroon Ratio)
+            with col_calc:
+                st.markdown("**Check:**")
+                
+                # Demand and Capacity in Blue (Calculated)
+                d_disp = tex_color(block['demand'], "blue")
+                c_disp = tex_color(block['capacity'], "blue")
+                r_disp = tex_color(block['ratio'], ratio_color)
+                
+                # Show the inequality
+                st.latex(eq_check)
+                
+                # Show the substitution
+                st.latex(rf"\frac{{{d_disp}}}{{{c_disp}}} = \mathbf{{{r_disp}}}")
+                
+                if is_fail:
+                    st.error("FAIL")
+                else:
+                    st.success("PASS")
             
-            checks_in_cat = [c for c in data['checks'] if c['category'] == cat]
-            
-            for check in checks_in_cat:
-                if check['ratio'] >= 0.0: # Show all checks
-                    with st.container():
-                        st.markdown(f"**{check['name']}** (Ref: *{check['ref']}*)")
-                        
-                        # A. Intermediate Variables (Inputs = GREEN)
-                        if check['intermediates']:
-                            cols = st.columns(4)
-                            for i, var in enumerate(check['intermediates']):
-                                with cols[i % 4]:
-                                    # LaTeX formatting for variables
-                                    # Symbol = Black, Value = Green
-                                    unit_tex = rf"\text{{ {var['unit']}}}" if var['unit'] else ""
-                                    st.latex(rf"{var['symbol']} = \textcolor{{green}}{{{var['value']}}}{unit_tex}")
-                        
-                        # B. Formula and Calculation
-                        math_data = get_aisc_explanation(check['name'], check['ref'], check['demand'], check['capacity'], check['ratio'])
-                        
-                        m1, m2 = st.columns([2, 1])
-                        with m1:
-                            st.latex(math_data['eq'])
-                            st.latex(math_data['check'])
-                        with m2:
-                            st.caption("Substitution")
-                            # Demand/Capacity = Blue, Ratio = Maroon
-                            st.latex(math_data['sub'])
-                            
-                        st.markdown("---")
+            st.divider()
 
-    except Exception as e:
-        st.error(f"Error parsing text. Please check the input format. ({e})")
+else:
+    st.info("👈 Paste the text in the sidebar to generate the report.")
