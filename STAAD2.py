@@ -1,10 +1,10 @@
  (cd "$(git rev-parse --show-toplevel)" && git apply --3way <<'EOF' 
 diff --git a/app.py b/app.py
 new file mode 100644
-index 0000000000000000000000000000000000000000..b9de5051d3dfcaa11fc9c893287a6f3d2fd37393
+index 0000000000000000000000000000000000000000..a2c28fb8a76d4d197eab459656bf360d9933b541
 --- /dev/null
 +++ b/app.py
-@@ -0,0 +1,514 @@
+@@ -0,0 +1,555 @@
 +import math
 +import re
 +from dataclasses import dataclass
@@ -400,6 +400,20 @@ index 0000000000000000000000000000000000000000..b9de5051d3dfcaa11fc9c893287a6f3d
 +    st.table(df)
 +
 +
++def display_definition_table(title: str, rows):
++    """Render a table with acronym, value, and definition columns."""
++
++    df = pd.DataFrame(rows, columns=["Acronym", "Value", "Definition"])
++    st.subheader(title)
++    st.table(df)
++
++
++def format_value(value: Optional[float], unit: str, precision: int = 3) -> str:
++    if value is None:
++        return "-"
++    return f"{value:.{precision}f} {unit}"
++
++
 +def main():
 +    st.set_page_config(page_title="STAAD Steel Member Calculation Sheet", layout="wide")
 +    st.title("STAAD Steel Member Calculation Sheet")
@@ -434,30 +448,57 @@ index 0000000000000000000000000000000000000000..b9de5051d3dfcaa11fc9c893287a6f3d
 +    display_table("Factored demand", loads)
 +
 +    section_props = SectionProperties(
-+        ag=values.get("ag", 0),
-+        ixx=values.get("ixx", 0),
-+        iyy=values.get("iyy", 0),
-+        zxx=values.get("zxx", 0),
-+        zyy=values.get("zyy", 0),
-+        sxx=values.get("sxx", 0),
-+        syy=values.get("syy", 0),
++        ag=values.get("ag"),
++        ixx=values.get("ixx"),
++        iyy=values.get("iyy"),
++        zxx=values.get("zxx"),
++        zyy=values.get("zyy"),
++        sxx=values.get("sxx"),
++        syy=values.get("syy"),
 +    )
-+    section_table = {
-+        "Ag": f"{section_props.ag:.3f} in²",
-+        "Ixx": f"{section_props.ixx:.2f} in⁴",
-+        "Iyy": f"{section_props.iyy:.2f} in⁴",
-+        "Zx": f"{section_props.zxx:.2f} in³",
-+        "Zy": f"{section_props.zyy:.2f} in³",
-+        "Sx": f"{section_props.sxx:.2f} in³",
-+        "Sy": f"{section_props.syy:.2f} in³",
-+    }
-+    display_table("Section properties", section_table)
++    section_rows = [
++        ("Ag", format_value(section_props.ag, "in²"), "Gross area of the section"),
++        ("Ixx", format_value(section_props.ixx, "in⁴", 2), "Moment of inertia about the major (x) axis"),
++        ("Iyy", format_value(section_props.iyy, "in⁴", 2), "Moment of inertia about the minor (y) axis"),
++        ("Zxx", format_value(section_props.zxx, "in³", 2), "Plastic section modulus about the major (x) axis"),
++        ("Zyy", format_value(section_props.zyy, "in³", 2), "Plastic section modulus about the minor (y) axis"),
++        ("Sxx", format_value(section_props.sxx, "in³", 2), "Elastic section modulus about the major (x) axis"),
++        ("Syy", format_value(section_props.syy, "in³", 2), "Elastic section modulus about the minor (y) axis"),
++    ]
++    display_definition_table("Section properties (definitions)", section_rows)
 +
-+    material = MaterialProperties(fy=values.get("fy", 0), fu=values.get("fu", 0))
-+    display_table("Material", {"Fy": f"{material.fy:.1f} ksi", "Fu": f"{material.fu:.1f} ksi"})
++    material = MaterialProperties(fy=values.get("fy"), fu=values.get("fu"))
++    material_rows = [
++        ("Fyld", format_value(material.fy, "ksi", 1), "Yield strength of the steel"),
++        ("Fu", format_value(material.fu, "ksi", 1), "Ultimate tensile strength of the steel"),
++        (
++            "L",
++            format_value(values.get("length"), "in", 1),
++            "Actual member length used as the unbraced length in checks",
++        ),
++    ]
++    display_definition_table("Material and length", material_rows)
 +
-+    design_params = {"Kx": values.get("kx"), "Ky": values.get("ky"), "Unbraced length": f"{values.get('length', 0):.1f} in"}
-+    display_table("Design parameters", design_params)
++    design_rows = [
++        ("Kx", format_value(values.get("kx"), "-", 2), "Effective length factor about the major (x) axis"),
++        ("Ky", format_value(values.get("ky"), "-", 2), "Effective length factor about the minor (y) axis"),
++        (
++            "NSF",
++            format_value(values.get("nsf"), "-", 2),
++            "Notional load scale factor used for stability considerations",
++        ),
++        (
++            "SLF",
++            format_value(values.get("slf"), "-", 2),
++            "Stability load factor applied to sway effects in the STAAD check",
++        ),
++        (
++            "CSP",
++            format_value(values.get("csp"), "-", 2),
++            "Code-specific parameter reported by STAAD for the rolled shape design",
++        ),
++    ]
++    display_definition_table("Design parameters (definitions)", design_rows)
 +
 +    st.markdown("---")
 +    st.header("Design checks")
