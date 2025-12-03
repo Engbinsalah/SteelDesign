@@ -860,43 +860,6 @@ def calculate_fe(Fe_flex, Fe_z, H):
     if term2 < 0: return 0 # Should not happen for valid inputs
     return term1 * (1 - term2**0.5)
 
-# Fe (Using Fex)
-st.markdown("**Case 1: Axis of Symmetry = X-Axis (using $F_{ex}$)**")
-Fex_val = comp_x.get("Fex", 0)
-Fe1 = calculate_fe(Fex_val, Fez, H_val)
-
-render_latex(
-    lhs="F_{e1}",
-    rhs="\\left( \\frac{F_{ex} + F_{ez}}{2 \\times H} \\right) \\left[ 1 - \\sqrt{1 - \\frac{4 \\times F_{ex} \\times F_{ez} \\times H}{(F_{ex} + F_{ez})^2}} \\right]",
-    subs={
-        "F_{ex}": Fex_val,
-        "F_{ez}": f"{Fez:.3f}",
-        "H": H_val
-    },
-    ref=f"{ftb.get('ref', '')} (Eq.E4-2 Modified)"
-)
-st.latex(f"F_{{e1}} = {Fe1:.3f} \\text{{ ksi}}")
-
-# Fe (Using Fey)
-st.markdown("**Case 2: Axis of Symmetry = Y-Axis (using $F_{ey}$)**")
-Fey_val = comp_y.get("Fey", 0)
-Fe2 = calculate_fe(Fey_val, Fez, H_val)
-
-render_latex(
-    lhs="F_{e2}",
-    rhs="\\left( \\frac{F_{ey} + F_{ez}}{2 \\times H} \\right) \\left[ 1 - \\sqrt{1 - \\frac{4 \\times F_{ey} \\times F_{ez} \\times H}{(F_{ey} + F_{ez})^2}} \\right]",
-    subs={
-        "F_{ey}": Fey_val,
-        "F_{ez}": f"{Fez:.3f}",
-        "H": H_val
-    },
-    ref=f"{ftb.get('ref', '')} (Eq.E4-2)"
-)
-st.latex(f"F_{{e2}} = {Fe2:.3f} \\text{{ ksi}}")
-
-st.markdown("---")
-st.write(f"**Governing Elastic F-T-B Stress ($F_e$):** {ftb.get('Fe', 0)} ksi")
-
 # Fcr
 render_latex(
     lhs="F_{cr}",
