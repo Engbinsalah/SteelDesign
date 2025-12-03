@@ -456,6 +456,21 @@ default_member_data = {
 # ==========================================
 # 3. HELPER FUNCTIONS
 # ==========================================
+def format_val(val, decimals=2):
+    """
+    Formats a number:
+    - If < 1, use 3 decimal places (or user specified).
+    - Otherwise, use 2 decimal places.
+    - Handles strings gracefully.
+    """
+    try:
+        f_val = float(val)
+        if abs(f_val) < 1 and f_val != 0:
+            return f"{f_val:.3f}"
+        return f"{f_val:.{decimals}f}"
+    except (ValueError, TypeError):
+        return str(val)
+
 def render_latex(lhs, rhs, subs=None, ref=None):
     """
     Renders a LaTeX equation with an optional substitution step.
@@ -1123,7 +1138,7 @@ st.latex(f"P_r / P_c = {Pr} / {Pc} = {pr_pc_ratio:.3f}")
 
 if pr_pc_ratio < 0.2:
     st.success("Since $P_r / P_c < 0.2$, Equation H1-1b applies.")
-    eqn_lhs = "\\frac{P_r}{2 \\times P_c} + \\left( \\frac{M_{rx}}{M_{cx}} + \\frac{M_{ry}}{M_{cy}} \\right)"
+    eqn_lhs = "\\frac{P_r}{2P_c} + \\left( \\frac{M_{rx}}{M_{cx}} + \\frac{M_{ry}}{M_{cy}} \\right)"
     ref_eqn = "Eq.H1-1b"
 else:
     st.warning("Since $P_r / P_c \ge 0.2$, Equation H1-1a applies.")
