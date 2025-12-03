@@ -822,9 +822,24 @@ if ro2 > 0 and Ag_val > 0 and L_val > 0:
 # Assume H = 1.0 for doubly symmetric
 H_val = 1.0
 
+# Fe (Using Fex)
+st.markdown("**Case 1: Axis of Symmetry = X-Axis (using $F_{ex}$)**")
 render_latex(
-    lhs="F_e",
-    rhs="\\left( \\frac{F_{ey} + F_{ez}}{2 \\times H} \\right) \\left[ 1 - \\sqrt{1 - \\frac{4 F_{ey}\\times F_{ez}\\times H}{(F_{ey} + F_{ez})^2}} \\right]",
+    lhs="F_{e1}",
+    rhs="\\left( \\frac{F_{ex} + F_{ez}}{2 \\times H} \\right) \\left[ 1 - \\sqrt{1 - \\frac{4 \\times F_{ex} \\times F_{ez} \\times H}{(F_{ex} + F_{ez})^2}} \\right]",
+    subs={
+        "F_{ex}": comp_x.get("Fex", 0),
+        "F_{ez}": f"{Fez:.3f}",
+        "H": H_val
+    },
+    ref=f"{ftb.get('ref', '')} (Eq.E4-2 Modified)"
+)
+
+# Fe (Using Fey)
+st.markdown("**Case 2: Axis of Symmetry = Y-Axis (using $F_{ey}$)**")
+render_latex(
+    lhs="F_{e2}",
+    rhs="\\left( \\frac{F_{ey} + F_{ez}}{2 \\times H} \\right) \\left[ 1 - \\sqrt{1 - \\frac{4 \\times F_{ey} \\times F_{ez} \\times H}{(F_{ey} + F_{ez})^2}} \\right]",
     subs={
         "F_{ey}": comp_y.get("Fey", 0),
         "F_{ez}": f"{Fez:.3f}",
@@ -832,6 +847,7 @@ render_latex(
     },
     ref=f"{ftb.get('ref', '')} (Eq.E4-2)"
 )
+
 st.latex(f"F_e = {ftb.get('Fe', 0)} \\text{{ ksi}}")
 
 # Fcr
