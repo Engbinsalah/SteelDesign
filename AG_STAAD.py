@@ -492,7 +492,9 @@ col1, col2, col3, col4 = st.columns(4)
 col1.metric("Member No", member_data["id"])
 col2.metric("Profile", member_data["profile"])
 col3.metric("Load Case", member_data["loadcase"])
-col4.metric("Status", member_data["status"], delta=str(member_data["ratio"]), delta_color="inverse")
+ratio_val = member_data["ratio"]
+delta_col = "normal" if ratio_val < 1.0 else "inverse"
+col4.metric("Status", member_data["status"], delta=str(ratio_val), delta_color=delta_col)
 
 st.markdown("---")
 
