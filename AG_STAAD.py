@@ -836,11 +836,17 @@ st.latex(f"H = {H_val:.3f}")
 
 # 3. Torsional Elastic Buckling Stress (Fez) - Eq. E4-7
 st.markdown("**3. Torsional Elastic Buckling Stress ($F_{ez}$)**")
+
+# Display inputs for verification
+st.write(f"Inputs: $L_{{cz}}={Lcz:.2f}$, $A_g={Ag_val}$, $\overline{{r}}_o^2={ro2_val:.3f}$, $C_w={Cw_val}$, $J={J_val}$")
+
 Fez = 0
 if ro2_val > 0 and Ag_val > 0 and Lcz > 0:
     term1 = (3.14159**2 * E_val * Cw_val) / (Lcz**2)
     term2 = G_val * J_val
     Fez = (term1 + term2) * (1 / (Ag_val * ro2_val))
+else:
+    st.warning("Cannot calculate $F_{ez}$ due to zero or missing inputs ($L_{cz}$, $A_g$, or $\overline{r}_o^2$).")
 
 render_latex(
     lhs="F_{ez}",
