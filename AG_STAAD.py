@@ -456,23 +456,51 @@ t_yield = checks.get("tension_yielding", {})
 t_rupture = checks.get("tension_rupture", {})
 
 st.markdown("#### Tensile Yielding")
+Fy = mat.get("Fyld", 0)
+Ag = props.get("Ag", {}).get("value", 0)
+Pn_val = t_yield.get('Pn', 0)
+if Pn_val == 0: Pn_val = Fy * Ag
+
 render_latex(
     lhs="P_n", 
     rhs="F_y \\times A_g", 
-    subs={"F_y": mat.get("Fyld", 0), "A_g": props.get("Ag", {}).get("value", 0)},
+    subs={"F_y": Fy, "A_g": Ag},
     ref=f"{t_yield.get('ref', '')} ({t_yield.get('eqn', '')})"
 )
-st.write(f"**Capacity ($P_n$):** {t_yield.get('Pn', 0)} kips")
+st.write(f"**Nominal Strength ($P_n$):** {Pn_val} kips")
+
+phi = 0.9
+phi_pn = phi * Pn_val
+render_latex(
+    lhs="\phi P_n", 
+    rhs=f"{phi} \\times P_n",
+    subs={"P_n": Pn_val}
+)
+st.write(f"**Design Capacity ($\phi P_n$):** {phi_pn:.2f} kips")
 result_card("Ratio", t_yield.get("ratio", 0), "", "PASS" if t_yield.get("ratio", 0) < 1.0 else "FAIL")
 
 st.markdown("#### Tensile Rupture")
+Fu = mat.get("Fu", 0)
+Ae = t_rupture.get("Ae", 0)
+Pn_rupture = t_rupture.get('Pn', 0)
+if Pn_rupture == 0: Pn_rupture = Fu * Ae
+
 render_latex(
     lhs="P_n", 
     rhs="F_u \\times A_e", 
-    subs={"F_u": mat.get("Fu", 0), "A_e": t_rupture.get("Ae", 0)},
+    subs={"F_u": Fu, "A_e": Ae},
     ref=f"{t_rupture.get('ref', '')} ({t_rupture.get('eqn', '')})"
 )
-st.write(f"**Capacity ($P_n$):** {t_rupture.get('Pn', 0)} kips")
+st.write(f"**Nominal Strength ($P_n$):** {Pn_rupture} kips")
+
+phi_rupture = 0.75
+phi_pn_rupture = phi_rupture * Pn_rupture
+render_latex(
+    lhs="\phi P_n", 
+    rhs=f"{phi_rupture} \\times P_n",
+    subs={"P_n": Pn_rupture}
+)
+st.write(f"**Design Capacity ($\phi P_n$):** {phi_pn_rupture:.2f} kips")
 result_card("Ratio", t_rupture.get("ratio", 0), "", "PASS" if t_rupture.get("ratio", 0) < 1.0 else "FAIL")
 
 
@@ -480,9 +508,22 @@ result_card("Ratio", t_rupture.get("ratio", 0), "", "PASS" if t_rupture.get("rat
 section_header("2.2 Compression Checks")
 comp_x = checks.get("compression_x", {})
 comp_y = checks.get("compression_y", {})
+phi_comp = 0.9
 
+# X-Axis
 st.markdown("#### Flexural Buckling (X-Axis)")
 st.write(f"Effective Slenderness ($L_{{cx}}/r_x$): {comp_x.get('Lcx_rx', 0)}")
+
+# FeX
+render_latex(
+    lhs="F_{ex}",
+    rhs="\\frac{\pi^2 E}{(L_{cx}/r_x)^2}",
+    subs={"E": "29000", "L_{cx}/r_x": comp_x.get('Lcx_rx', 0)},
+    ref="Eq.E3-4"
+)
+st.write(f"**Elastic Buckling Stress ($F_{{ex}}$):** {comp_x.get('Fex', 0)} ksi")
+
+# FcrX
 render_latex(
     lhs="F_{crx}",
     rhs="0.658^{F_y/F_{ex}} \\times F_y",
@@ -490,17 +531,41 @@ render_latex(
     ref=f"{comp_x.get('ref', '')} (Eq.E3-2)"
 )
 st.write(f"**Critical Stress ($F_{{crx}}$):** {comp_x.get('Fcrx', 0)} ksi")
+
+# PnX
 render_latex(
     lhs="P_{nx}",
     rhs="F_{crx} \\times A_g",
     subs={"F_{crx}": comp_x.get("Fcrx", 0), "A_g": props.get("Ag", {}).get("value", 0)},
     ref="Eq.E3-1"
 )
-st.write(f"**Capacity ($P_{{nx}}$):** {comp_x.get('Pnx', 0)} kips")
+st.write(f"**Nominal Strength ($P_{{nx}}$):** {comp_x.get('Pnx', 0)} kips")
+
+# Phi PnX
+phi_pnx = phi_comp * comp_x.get('Pnx', 0)
+render_latex(
+    lhs="\phi P_{nx}",
+    rhs=f"{phi_comp} \\times P_{{nx}}",
+    subs={"P_{nx}": comp_x.get('Pnx', 0)}
+)
+st.write(f"**Design Capacity ($\phi P_{{nx}}$):** {phi_pnx:.2f} kips")
 result_card("Ratio", comp_x.get("ratio", 0), "", "PASS" if comp_x.get("ratio", 0) < 1.0 else "FAIL")
 
+
+# Y-Axis
 st.markdown("#### Flexural Buckling (Y-Axis)")
 st.write(f"Effective Slenderness ($L_{{cy}}/r_y$): {comp_y.get('Lcy_ry', 0)}")
+
+# FeY
+render_latex(
+    lhs="F_{ey}",
+    rhs="\\frac{\pi^2 E}{(L_{cy}/r_y)^2}",
+    subs={"E": "29000", "L_{cy}/r_y": comp_y.get('Lcy_ry', 0)},
+    ref="Eq.E3-4"
+)
+st.write(f"**Elastic Buckling Stress ($F_{{ey}}$):** {comp_y.get('Fey', 0)} ksi")
+
+# FcrY
 render_latex(
     lhs="F_{cry}",
     rhs="0.658^{F_y/F_{ey}} \\times F_y",
@@ -508,13 +573,24 @@ render_latex(
     ref=f"{comp_y.get('ref', '')} (Eq.E3-2)"
 )
 st.write(f"**Critical Stress ($F_{{cry}}$):** {comp_y.get('Fcry', 0)} ksi")
+
+# PnY
 render_latex(
     lhs="P_{ny}",
     rhs="F_{cry} \\times A_g",
     subs={"F_{cry}": comp_y.get("Fcry", 0), "A_g": props.get("Ag", {}).get("value", 0)},
     ref="Eq.E3-1"
 )
-st.write(f"**Capacity ($P_{{ny}}$):** {comp_y.get('Pny', 0)} kips")
+st.write(f"**Nominal Strength ($P_{{ny}}$):** {comp_y.get('Pny', 0)} kips")
+
+# Phi PnY
+phi_pny = phi_comp * comp_y.get('Pny', 0)
+render_latex(
+    lhs="\phi P_{ny}",
+    rhs=f"{phi_comp} \\times P_{{ny}}",
+    subs={"P_{ny}": comp_y.get('Pny', 0)}
+)
+st.write(f"**Design Capacity ($\phi P_{{ny}}$):** {phi_pny:.2f} kips")
 result_card("Ratio", comp_y.get("ratio", 0), "", "PASS" if comp_y.get("ratio", 0) < 1.0 else "FAIL")
 
 
