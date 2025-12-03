@@ -320,7 +320,7 @@ default_member_data = {
     "ref": "Eq.H1-1b",
     "location": 0.00,
     "forces": {
-        "Pz": {"value": 8.409, "unit": "kips", "desc": "Axial Compression"},
+        "Pz": {"value": 6.830, "unit": "kips", "desc": "Axial Compression"},
         "Vy": {"value": -1.970, "unit": "kips", "desc": "Shear Y"},
         "Vx": {"value": -0.2474, "unit": "kips", "desc": "Shear X"},
         "Tz": {"value": -2.469, "unit": "kip-in", "desc": "Torsion"},
