@@ -81,7 +81,12 @@ def parse_staad_report(text):
             
         # Forces
         if "Pz:" in line:
-            data["forces"]["Pz"] = {"value": parse_value(line, "Pz"), "unit": "kips", "desc": "Axial Compression"}
+            pz_val = parse_value(line, "Pz")
+            pz_type = "Compression" # Default
+            if "T" in line and "Pz" in line: pz_type = "Tension"
+            elif "C" in line and "Pz" in line: pz_type = "Compression"
+            
+            data["forces"]["Pz"] = {"value": pz_val, "unit": "kips", "desc": f"Axial {pz_type}", "type": pz_type}
             data["forces"]["Vy"] = {"value": parse_value(line, "Vy"), "unit": "kips", "desc": "Shear Y"}
             data["forces"]["Vx"] = {"value": parse_value(line, "Vx"), "unit": "kips", "desc": "Shear X"}
         if "Tz:" in line:
@@ -382,7 +387,9 @@ def calculate_results(data):
     SLF = params.get("SLF", 1.0)
     
     forces = data["forces"]
-    Pu = abs(forces.get("Pz", {}).get("value", 0))
+    pz_data = forces.get("Pz", {})
+    Pu = abs(pz_data.get("value", 0))
+    is_tension = pz_data.get("type") == "Tension"
     Vux = abs(forces.get("Vx", {}).get("value", 0))
     Vuy = abs(forces.get("Vy", {}).get("value", 0))
     Mux = abs(forces.get("Mx", {}).get("value", 0))
@@ -569,7 +576,12 @@ def calculate_results(data):
     checks["flb_y"]["ratio"] = Muy/phi_Mn_flb_y if phi_Mn_flb_y else 0
     
     # --- INTERACTION ---
-    Pc = min(phi_Pnx, phi_Pny, phi_Pn_ftb)
+    # Determine Pc based on force type (Tension vs Compression)
+    if is_tension:
+        Pc = min(phi_Pn_yield, phi_Pn_rup)
+    else:
+        Pc = min(phi_Pnx, phi_Pny, phi_Pn_ftb)
+        
     Mcx = min(phi_Mnx, phi_Mn_flb_x)
     Mcy = min(phi_Mny, phi_Mn_flb_y)
     
