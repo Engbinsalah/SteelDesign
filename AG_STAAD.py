@@ -343,6 +343,25 @@ default_member_data = {
             "Cv": 1.0000, "Vnx": 208.80
         },
         "shear_y": {
+            "demand": 1.970, "capacity": 68.40, "ratio": 0.029, "ref": "Cl.G1",
+            "Cv": 1.0000, "Vny": 68.400
+        },
+        "ltb_x": { 
+            "demand": -243.2, "capacity": 1284.0, "ratio": 0.189, "ref": "Cl.F2.2",
+            "Mnx": 1426.5, "Cb": 1.000, "Lp": 85.443, "Lr": 297.38, "Rts": 2.2593
+        },
+        "flb_x": {
+            "demand": -243.2, "capacity": 1367.0, "ratio": 0.178, "ref": "Cl.F3.1",
+            "Mnx": 1518.4
+        },
+        "flb_y": {
+            "demand": -83.49, "capacity": 633.5, "ratio": 0.132, "ref": "Cl.F6.2",
+            "Mny": 703.88
+        },
+        "flexure_y": {
+            "demand": -83.49, "capacity": 634.5, "ratio": 0.132, "ref": "Cl.F6.1",
+            "Mny": 705.00
+        },
         "interaction": {
             "ratio": 0.218, "criteria": "Eq.H1-1b",
             "Pc": 235.30, "Mcx": 1283.8, "Mcy": 633.50
