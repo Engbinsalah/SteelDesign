@@ -1033,7 +1033,7 @@ c_comp1, c_comp2 = st.columns(2)
 with c_comp1:
     # X-Axis
     st.markdown("#### Flexural Buckling (X-Axis)")
-    st.write(f"Effective Slenderness ($L_{{cx}}/r_x$): {comp_x.get('Lcx_rx', 0)}")
+    st.write(f"Effective Slenderness ($L_{{cx}}/r_x$): {format_val(comp_x.get('Lcx_rx', 0), 3)}")
 
     # FeX
     render_latex(
@@ -1077,7 +1077,7 @@ with c_comp1:
 with c_comp2:
     # Y-Axis
     st.markdown("#### Flexural Buckling (Y-Axis)")
-    st.write(f"Effective Slenderness ($L_{{cy}}/r_y$): {comp_y.get('Lcy_ry', 0)}")
+    st.write(f"Effective Slenderness ($L_{{cy}}/r_y$): {format_val(comp_y.get('Lcy_ry', 0), 3)}")
 
     # FeY
     render_latex(
