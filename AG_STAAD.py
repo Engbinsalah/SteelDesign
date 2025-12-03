@@ -32,6 +32,7 @@ def parse_staad_report(text):
         "tension_rupture": {"demand": 0, "capacity": 0, "ratio": 0, "ref": "", "Ae": 0, "Pn": 0, "eqn": ""},
         "compression_x": {"demand": 0, "capacity": 0, "ratio": 0, "ref": "", "Lcx_rx": 0, "Fex": 0, "Fcrx": 0, "Pnx": 0},
         "compression_y": {"demand": 0, "capacity": 0, "ratio": 0, "ref": "", "Lcy_ry": 0, "Fey": 0, "Fcry": 0, "Pny": 0},
+        "ftb": {"demand": 0, "capacity": 0, "ratio": 0, "ref": "", "Fe": 0, "Fcr": 0, "Pn": 0},
         "shear_x": {"demand": 0, "capacity": 0, "ratio": 0, "ref": "", "Cv": 0, "Vnx": 0},
         "shear_y": {"demand": 0, "capacity": 0, "ratio": 0, "ref": "", "Cv": 0, "Vny": 0},
         "ltb_x": {"demand": 0, "capacity": 0, "ratio": 0, "ref": "", "Mnx": 0, "Cb": 1.0, "Lp": 0, "Lr": 0},
@@ -106,6 +107,7 @@ def parse_staad_report(text):
         elif "TENSILE RUPTURE" in line: current_section = "tens_rup"
         elif "FLEXURAL BUCKLING X" in line: current_section = "comp_x"
         elif "FLEXURAL BUCKLING Y" in line: current_section = "comp_y"
+        elif "FLEXURAL-TORSIONAL-BUCKLING" in line: current_section = "ftb"
         elif "SHEAR ALONG X" in line: current_section = "shear_x"
         elif "SHEAR ALONG Y" in line: current_section = "shear_y"
         elif "FLEXURAL YIELDING (Y)" in line: current_section = "flex_y"
@@ -167,6 +169,18 @@ def parse_staad_report(text):
             if "Elastic Buckling Stress" in line: checks["compression_y"]["Fey"] = parse_value(line, "Fey")
             if "Crit. Buckling Stress" in line: checks["compression_y"]["Fcry"] = parse_value(line, "Fcry")
             if "Nom. Flexural Buckling" in line: checks["compression_y"]["Pny"] = parse_value(line, "Pny")
+
+        elif current_section == "ftb":
+            if "Cl.E" in line and "DEMAND" not in line:
+                 vals = re.findall(r"[-+]?\d*\.\d+|\d+", line)
+                 if len(vals) >= 3:
+                     checks["ftb"]["demand"] = float(vals[0])
+                     checks["ftb"]["capacity"] = float(vals[1])
+                     checks["ftb"]["ratio"] = float(vals[2])
+                     checks["ftb"]["ref"] = "Cl.E4"
+            if "Elastic F-T-B Stress" in line: checks["ftb"]["Fe"] = parse_value(line, "Fe")
+            if "Crit. F-T-B Stress" in line: checks["ftb"]["Fcr"] = parse_value(line, "Fcr")
+            if "Nom. Flex-tor Buckling" in line: checks["ftb"]["Pn"] = parse_value(line, "Pn")
 
         elif current_section == "shear_x":
             if "Cl.G" in line and "DEMAND" not in line:
@@ -294,6 +308,10 @@ default_member_data = {
         "compression_y": {
             "demand": 8.409, "capacity": 235.3, "ratio": 0.036, "ref": "Cl.E3", 
             "Lcy_ry": 87.309, "Fey": 37.547, "Fcry": 28.636, "Pny": 261.44
+        },
+        "ftb": {
+             "demand": 8.409, "capacity": 340.4, "ratio": 0.025, "ref": "Cl.E4",
+             "Fe": 111.22, "Fcr": 41.424, "Pn": 378.20
         },
         "shear_x": {
             "demand": 1.360, "capacity": 187.9, "ratio": 0.007, "ref": "Cl.G1",
@@ -592,6 +610,49 @@ render_latex(
 )
 st.write(f"**Design Capacity ($\phi P_{{ny}}$):** {phi_pny:.2f} kips")
 result_card("Ratio", comp_y.get("ratio", 0), "", "PASS" if comp_y.get("ratio", 0) < 1.0 else "FAIL")
+
+
+# Flexural-Torsional Buckling
+ftb = checks.get("ftb", {})
+st.markdown("#### Flexural-Torsional Buckling")
+
+# Fe
+render_latex(
+    lhs="F_e",
+    rhs="\\text{Calculated from Torsional Properties}",
+    subs={},
+    ref=f"{ftb.get('ref', '')} (Eq.E4-2)"
+)
+st.write(f"**Elastic F-T-B Stress ($F_e$):** {ftb.get('Fe', 0)} ksi")
+
+# Fcr
+render_latex(
+    lhs="F_{cr}",
+    rhs="0.658^{F_y/F_e} \\times F_y",
+    subs={"F_y": mat.get("Fyld", 0), "F_e": ftb.get("Fe", 0)},
+    ref="Eq.E3-2"
+)
+st.write(f"**Critical Stress ($F_{{cr}}$):** {ftb.get('Fcr', 0)} ksi")
+
+# Pn
+render_latex(
+    lhs="P_n",
+    rhs="F_{cr} \\times A_g",
+    subs={"F_{cr}": ftb.get("Fcr", 0), "A_g": props.get("Ag", {}).get("value", 0)},
+    ref="Eq.E4-1"
+)
+st.write(f"**Nominal Strength ($P_n$):** {ftb.get('Pn', 0)} kips")
+
+# Phi Pn
+phi_ftb = 0.9
+phi_pn_ftb = phi_ftb * ftb.get('Pn', 0)
+render_latex(
+    lhs="\phi P_n",
+    rhs=f"{phi_ftb} \\times P_n",
+    subs={"P_n": ftb.get('Pn', 0)}
+)
+st.write(f"**Design Capacity ($\phi P_n$):** {phi_pn_ftb:.2f} kips")
+result_card("Ratio", ftb.get("ratio", 0), "", "PASS" if ftb.get("ratio", 0) < 1.0 else "FAIL")
 
 
 # 2.3 Shear
