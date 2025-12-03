@@ -344,10 +344,16 @@ def parse_staad_report(text):
             if "Cb" in line: data["params"]["Cb"] = parse_value(line, "Cb")
 
     # Fallback for Cb if not found in LTB section (sometimes in params)
-    if checks["ltb_x"]["Cb"] == 1.0 and "Cb" in data["params"]:
-        pass
-    else:
+    # Fallback for Cb if not found in LTB section (sometimes in params)
+    # Priority: LTB section CbX > Params Cb > Default 1.0
+    if checks["ltb_x"]["Cb"] != 1.0:
         data["params"]["Cb"] = checks["ltb_x"]["Cb"]
+    elif "Cb" in data["params"]:
+        # If found in params but not in LTB section, use params value
+        checks["ltb_x"]["Cb"] = data["params"]["Cb"]
+    else:
+        # Default
+        data["params"]["Cb"] = 1.0
 
     data["checks"] = checks
     
@@ -584,6 +590,10 @@ def calculate_results(data):
         
     Mcx = min(phi_Mnx, phi_Mn_flb_x)
     Mcy = min(phi_Mny, phi_Mn_flb_y)
+    
+    # Store Mcx/Mcy in interaction dict for display
+    checks["interaction"]["Mcx"] = Mcx
+    checks["interaction"]["Mcy"] = Mcy
     
     Pr_Pc = Pu / Pc if Pc > 0 else 0
     
