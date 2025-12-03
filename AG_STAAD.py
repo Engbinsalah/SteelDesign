@@ -87,24 +87,50 @@ def parse_staad_report(text):
             data["forces"]["Mx"] = {"value": parse_value(line, "Mx"), "unit": "kip-in", "desc": "Moment X"}
             
         # Properties
-        if "Ag  :" in line:
-            data["properties"]["Ag"] = {"value": parse_value(line, "Ag"), "unit": "in²"}
-            data["properties"]["Axx"] = {"value": parse_value(line, "Axx"), "unit": "in²"}
-            data["properties"]["Ayy"] = {"value": parse_value(line, "Ayy"), "unit": "in²"}
-        if "Ixx :" in line:
-            data["properties"]["Ixx"] = {"value": parse_value(line, "Ixx"), "unit": "in⁴"}
-            data["properties"]["Iyy"] = {"value": parse_value(line, "Iyy"), "unit": "in⁴"}
-            data["properties"]["J"] = {"value": parse_value(line, "J"), "unit": "in⁴"}
-        if "Sxx+:" in line:
+        if "Ag" in line and (":" in line or "=" in line):
+            val = parse_value(line, "Ag")
+            if val: data["properties"]["Ag"] = {"value": val, "unit": "in²"}
+            val = parse_value(line, "Axx")
+            if val: data["properties"]["Axx"] = {"value": val, "unit": "in²"}
+            val = parse_value(line, "Ayy")
+            if val: data["properties"]["Ayy"] = {"value": val, "unit": "in²"}
+        if "Ixx" in line and (":" in line or "=" in line):
+            val = parse_value(line, "Ixx")
+            if val: data["properties"]["Ixx"] = {"value": val, "unit": "in⁴"}
+            val = parse_value(line, "Iyy")
+            if val: data["properties"]["Iyy"] = {"value": val, "unit": "in⁴"}
+            val = parse_value(line, "J")
+            if val: data["properties"]["J"] = {"value": val, "unit": "in⁴"}
+        if "Sxx" in line and (":" in line or "=" in line):
             # Escape + for regex
-            data["properties"]["Sxx"] = {"value": parse_value(line, r"Sxx\+"), "unit": "in³"} 
-            data["properties"]["Zxx"] = {"value": parse_value(line, "Zxx"), "unit": "in³"}
-        if "Syy+:" in line:
-            data["properties"]["Syy"] = {"value": parse_value(line, r"Syy\+"), "unit": "in³"}
-            data["properties"]["Zyy"] = {"value": parse_value(line, "Zyy"), "unit": "in³"}
-        if "Cw  :" in line:
-            data["properties"]["Cw"] = {"value": parse_value(line, "Cw"), "unit": "in⁶"}
-            
+            val = parse_value(line, r"Sxx\+")
+            if val: data["properties"]["Sxx"] = {"value": val, "unit": "in³"} 
+            val = parse_value(line, "Zxx")
+            if val: data["properties"]["Zxx"] = {"value": val, "unit": "in³"}
+        if "Syy" in line and (":" in line or "=" in line):
+            val = parse_value(line, r"Syy\+")
+            if val: data["properties"]["Syy"] = {"value": val, "unit": "in³"}
+            val = parse_value(line, "Zyy")
+            if val: data["properties"]["Zyy"] = {"value": val, "unit": "in³"}
+        if "Cw" in line and (":" in line or "=" in line):
+            val = parse_value(line, "Cw")
+            if val: data["properties"]["Cw"] = {"value": val, "unit": "in⁶"}
+        if "Cw" in line and (":" in line or "=" in line):
+            val = parse_value(line, "Cw")
+            if val: data["properties"]["Cw"] = {"value": val, "unit": "in⁶"}
+
+        # Material
+        if "Fyld" in line:
+            val = parse_value(line, "Fyld")
+            if val: data["material"]["Fyld"] = val
+            val = parse_value(line, "Fu")
+            if val: data["material"]["Fu"] = val
+
+        # Parameters
+        if "Actual Member Length" in line:
+            data["params"]["Length"] = parse_value(line, "Actual Member Length")
+
+        if "Design Parameters" in line: current_section = "params"
         elif "FLEXURAL YIELDING (Y)" in line: current_section = "flex_y"
         elif "LAT TOR BUCK ABOUT X" in line: current_section = "ltb_x"
         elif "FLANGE LOCAL BUCK(X)" in line: current_section = "flb_x"
@@ -299,6 +325,16 @@ def parse_staad_report(text):
                         "case": m.group(5)
                     }
 
+                    }
+
+        elif current_section == "params":
+            if "Kx" in line: data["params"]["Kx"] = parse_value(line, "Kx")
+            if "Ky" in line: data["params"]["Ky"] = parse_value(line, "Ky")
+            if "NSF" in line: data["params"]["NSF"] = parse_value(line, "NSF")
+            if "SLF" in line: data["params"]["SLF"] = parse_value(line, "SLF")
+            if "CSP" in line: data["params"]["CSP"] = parse_value(line, "CSP")
+            if "Cb" in line: data["params"]["Cb"] = parse_value(line, "Cb")
+
     # Fallback for Cb if not found in LTB section (sometimes in params)
     if checks["ltb_x"]["Cb"] == 1.0 and "Cb" in data["params"]:
         pass
@@ -492,7 +528,9 @@ col1, col2, col3, col4 = st.columns(4)
 col1.metric("Member No", member_data["id"])
 col2.metric("Profile", member_data["profile"])
 col3.metric("Load Case", member_data["loadcase"])
-col4.metric("Status", member_data["status"], delta=str(member_data["ratio"]), delta_color="inverse")
+ratio_val = member_data["ratio"]
+delta_col = "normal" if ratio_val < 1.0 else "inverse"
+col4.metric("Status", member_data["status"], delta=str(ratio_val), delta_color=delta_col)
 
 st.markdown("---")
 
@@ -834,11 +872,17 @@ st.latex(f"H = {H_val:.3f}")
 
 # 3. Torsional Elastic Buckling Stress (Fez) - Eq. E4-7
 st.markdown("**3. Torsional Elastic Buckling Stress ($F_{ez}$)**")
+
+# Display inputs for verification
+st.write(f"Inputs: $L_{{cz}}={Lcz:.2f}$, $A_g={Ag_val}$, $\overline{{r}}_o^2={ro2_val:.3f}$, $C_w={Cw_val}$, $J={J_val}$")
+
 Fez = 0
 if ro2_val > 0 and Ag_val > 0 and Lcz > 0:
     term1 = (3.14159**2 * E_val * Cw_val) / (Lcz**2)
     term2 = G_val * J_val
     Fez = (term1 + term2) * (1 / (Ag_val * ro2_val))
+else:
+    st.warning("Cannot calculate $F_{ez}$ due to zero or missing inputs ($L_{cz}$, $A_g$, or $\overline{r}_o^2$).")
 
 render_latex(
     lhs="F_{ez}",
