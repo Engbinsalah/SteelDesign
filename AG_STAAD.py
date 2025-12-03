@@ -1046,7 +1046,7 @@ st.write(f"**Effective Radius of Gyration ($R_{{ts}}$):** {ltb_x.get('Rts', 0)} 
 # Lr
 render_latex(
     lhs="L_r",
-    rhs="1.95 R_{ts} \\frac{E}{0.7 F_y} \\sqrt{\\frac{J c}{S_x h_0} + \\sqrt{(\\frac{J c}{S_x h_0})^2 + 6.76 (\\frac{0.7 F_y}{E})^2}}",
+    rhs="1.95 \\times R_{ts} \\frac{E}{0.7 F_y} \\sqrt{\\frac{J c}{S_x h_0} + \\sqrt{(\\frac{J c}{S_x h_0})^2 + 6.76 (\\frac{0.7 F_y}{E})^2}}",
     subs={"R_{ts}": ltb_x.get("Rts", 0), "E": "29000", "F_y": mat.get("Fyld", 0)},
     ref="Eq.F2-6"
 )
