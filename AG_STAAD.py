@@ -597,6 +597,13 @@ with c2:
     st.write(f"- LTB Modification Factor ($C_b$): {par.get('Cb', 1.0)}")
     st.write(f"- Other Parameters: NSF={par.get('NSF', 1.0)}, SLF={par.get('SLF', 1.0)}, CSP={par.get('CSP', 0)}")
 
+    st.markdown("""
+    **Definitions:**
+    - **NSF**: Net section factor for tension members.
+    - **SLF**: Shear Lag Factor.
+    - **CSP**: Spacing between connectors in current length units. Refer to Section E6.1 and E6.2 of AISC 360.
+    """)
+
 # --- 1.4 Classification ---
 st.header("1.4 Slenderness Classification")
 cls = member_data.get("classification", default_member_data["classification"])
@@ -696,17 +703,17 @@ render_latex(
     subs={"F_y": Fy, "A_g": Ag},
     ref=f"{t_yield.get('ref', '')} ({t_yield.get('eqn', '')})"
 )
-st.latex(f"P_n = {Pn_val} \\text{{ kips}}")
+st.latex(f"P_n = {format_val(Pn_val)} \\text{{ kips}}")
 
 phi = 0.9
 phi_pn = phi * Pn_val
 render_latex(
     lhs="\phi P_n", 
     rhs=f"{phi} \\times P_n",
-    subs={"P_n": Pn_val}
+    subs={"P_n": format_val(Pn_val)}
 )
-st.latex(f"\phi P_n = {phi_pn:.2f} \\text{{ kips}}")
-st.latex(f"P_u = {t_yield.get('demand', 0)} \\text{{ kips}}")
+st.latex(f"\phi P_n = {format_val(phi_pn)} \\text{{ kips}}")
+st.latex(f"P_u = {format_val(t_yield.get('demand', 0))} \\text{{ kips}}")
 result_card("Ratio", t_yield.get("ratio", 0), "", "PASS" if t_yield.get("ratio", 0) < 1.0 else "FAIL")
 
 st.markdown("#### Tensile Rupture")
@@ -721,17 +728,17 @@ render_latex(
     subs={"F_u": Fu, "A_e": Ae},
     ref=f"{t_rupture.get('ref', '')} ({t_rupture.get('eqn', '')})"
 )
-st.latex(f"P_n = {Pn_rupture} \\text{{ kips}}")
+st.latex(f"P_n = {format_val(Pn_rupture)} \\text{{ kips}}")
 
 phi_rupture = 0.75
 phi_pn_rupture = phi_rupture * Pn_rupture
 render_latex(
     lhs="\phi P_n", 
     rhs=f"{phi_rupture} \\times P_n",
-    subs={"P_n": Pn_rupture}
+    subs={"P_n": format_val(Pn_rupture)}
 )
-st.latex(f"\phi P_n = {phi_pn_rupture:.2f} \\text{{ kips}}")
-st.latex(f"P_u = {t_rupture.get('demand', 0)} \\text{{ kips}}")
+st.latex(f"\phi P_n = {format_val(phi_pn_rupture)} \\text{{ kips}}")
+st.latex(f"P_u = {format_val(t_rupture.get('demand', 0))} \\text{{ kips}}")
 result_card("Ratio", t_rupture.get("ratio", 0), "", "PASS" if t_rupture.get("ratio", 0) < 1.0 else "FAIL")
 
 
@@ -761,26 +768,26 @@ render_latex(
     subs={"F_y": mat.get("Fyld", 0), "F_{ex}": comp_x.get("Fex", 0)},
     ref=f"{comp_x.get('ref', '')} (Eq.E3-2)"
 )
-st.latex(f"F_{{crx}} = {comp_x.get('Fcrx', 0)} \\text{{ ksi}}")
+st.latex(f"F_{{crx}} = {format_val(comp_x.get('Fcrx', 0))} \\text{{ ksi}}")
 
 # PnX
 render_latex(
     lhs="P_{nx}",
     rhs="F_{crx} \\times A_g",
-    subs={"F_{crx}": comp_x.get("Fcrx", 0), "A_g": props.get("Ag", {}).get("value", 0)},
+    subs={"F_{crx}": format_val(comp_x.get("Fcrx", 0)), "A_g": props.get("Ag", {}).get("value", 0)},
     ref="Eq.E3-1"
 )
-st.latex(f"P_{{nx}} = {comp_x.get('Pnx', 0)} \\text{{ kips}}")
+st.latex(f"P_{{nx}} = {format_val(comp_x.get('Pnx', 0))} \\text{{ kips}}")
 
 # Phi PnX
 phi_pnx = phi_comp * comp_x.get('Pnx', 0)
 render_latex(
     lhs="\phi P_{nx}",
     rhs=f"{phi_comp} \\times P_{{nx}}",
-    subs={"P_{nx}": comp_x.get('Pnx', 0)}
+    subs={"P_{nx}": format_val(comp_x.get('Pnx', 0))}
 )
-st.latex(f"\phi P_{{nx}} = {phi_pnx:.2f} \\text{{ kips}}")
-st.latex(f"P_u = {comp_x.get('demand', 0)} \\text{{ kips}}")
+st.latex(f"\phi P_{{nx}} = {format_val(phi_pnx)} \\text{{ kips}}")
+st.latex(f"P_u = {format_val(comp_x.get('demand', 0))} \\text{{ kips}}")
 result_card("Ratio", comp_x.get("ratio", 0), "", "PASS" if comp_x.get("ratio", 0) < 1.0 else "FAIL")
 
 
@@ -804,26 +811,26 @@ render_latex(
     subs={"F_y": mat.get("Fyld", 0), "F_{ey}": comp_y.get("Fey", 0)},
     ref=f"{comp_y.get('ref', '')} (Eq.E3-2)"
 )
-st.latex(f"F_{{cry}} = {comp_y.get('Fcry', 0)} \\text{{ ksi}}")
+st.latex(f"F_{{cry}} = {format_val(comp_y.get('Fcry', 0))} \\text{{ ksi}}")
 
 # PnY
 render_latex(
     lhs="P_{ny}",
     rhs="F_{cry} \\times A_g",
-    subs={"F_{cry}": comp_y.get("Fcry", 0), "A_g": props.get("Ag", {}).get("value", 0)},
+    subs={"F_{cry}": format_val(comp_y.get("Fcry", 0)), "A_g": props.get("Ag", {}).get("value", 0)},
     ref="Eq.E3-1"
 )
-st.latex(f"P_{{ny}} = {comp_y.get('Pny', 0)} \\text{{ kips}}")
+st.latex(f"P_{{ny}} = {format_val(comp_y.get('Pny', 0))} \\text{{ kips}}")
 
 # Phi PnY
 phi_pny = phi_comp * comp_y.get('Pny', 0)
 render_latex(
     lhs="\phi P_{ny}",
     rhs=f"{phi_comp} \\times P_{{ny}}",
-    subs={"P_{ny}": comp_y.get('Pny', 0)}
+    subs={"P_{ny}": format_val(comp_y.get('Pny', 0))}
 )
-st.latex(f"\phi P_{{ny}} = {phi_pny:.2f} \\text{{ kips}}")
-st.latex(f"P_u = {comp_y.get('demand', 0)} \\text{{ kips}}")
+st.latex(f"\phi P_{{ny}} = {format_val(phi_pny)} \\text{{ kips}}")
+st.latex(f"P_u = {format_val(comp_y.get('demand', 0))} \\text{{ kips}}")
 result_card("Ratio", comp_y.get("ratio", 0), "", "PASS" if comp_y.get("ratio", 0) < 1.0 else "FAIL")
 
 
@@ -928,16 +935,16 @@ render_latex(
     subs={"F_y": mat.get("Fyld", 0), "F_e": ftb.get("Fe", 0)},
     ref="Eq.E3-2"
 )
-st.latex(f"F_{{cr}} = {ftb.get('Fcr', 0)} \\text{{ ksi}}")
+st.latex(f"F_{{cr}} = {format_val(ftb.get('Fcr', 0))} \\text{{ ksi}}")
 
 # Pn
 render_latex(
     lhs="P_n",
     rhs="F_{cr} \\times A_g",
-    subs={"F_{cr}": ftb.get("Fcr", 0), "A_g": props.get("Ag", {}).get("value", 0)},
+    subs={"F_{cr}": format_val(ftb.get("Fcr", 0)), "A_g": props.get("Ag", {}).get("value", 0)},
     ref="Eq.E4-1"
 )
-st.latex(f"P_n = {ftb.get('Pn', 0)} \\text{{ kips}}")
+st.latex(f"P_n = {format_val(ftb.get('Pn', 0))} \\text{{ kips}}")
 
 # Phi Pn
 phi_ftb = 0.9
@@ -945,10 +952,10 @@ phi_pn_ftb = phi_ftb * ftb.get('Pn', 0)
 render_latex(
     lhs="\phi P_n",
     rhs=f"{phi_ftb} \\times P_n",
-    subs={"P_n": ftb.get('Pn', 0)}
+    subs={"P_n": format_val(ftb.get('Pn', 0))}
 )
-st.latex(f"\phi P_n = {phi_pn_ftb:.2f} \\text{{ kips}}")
-st.latex(f"P_u = {ftb.get('demand', 0)} \\text{{ kips}}")
+st.latex(f"\phi P_n = {format_val(phi_pn_ftb)} \\text{{ kips}}")
+st.latex(f"P_u = {format_val(ftb.get('demand', 0))} \\text{{ kips}}")
 result_card("Ratio", ftb.get("ratio", 0), "", "PASS" if ftb.get("ratio", 0) < 1.0 else "FAIL")
 
 
@@ -966,8 +973,8 @@ with c_s1:
         subs={"F_y": mat.get("Fyld", 0), "A_w": "Aw", "C_v": shear_x.get("Cv", 0)},
         ref=f"{shear_x.get('ref', '')} (Eq.G2-1)"
     )
-    st.latex(f"V_{{nx}} = {shear_x.get('Vnx', 0)} \\text{{ kips}}")
-    st.latex(f"V_{{ux}} = {shear_x.get('demand', 0)} \\text{{ kips}}")
+    st.latex(f"V_{{nx}} = {format_val(shear_x.get('Vnx', 0))} \\text{{ kips}}")
+    st.latex(f"V_{{ux}} = {format_val(shear_x.get('demand', 0))} \\text{{ kips}}")
     result_card("Ratio", shear_x.get("ratio", 0), "", "PASS" if shear_x.get("ratio", 0) < 1.0 else "FAIL")
 
 with c_s2:
@@ -978,8 +985,8 @@ with c_s2:
         subs={"F_y": mat.get("Fyld", 0), "A_w": "Aw", "C_v": shear_y.get("Cv", 0)},
         ref=f"{shear_y.get('ref', '')} (Eq.G2-1)"
     )
-    st.latex(f"V_{{ny}} = {shear_y.get('Vny', 0)} \\text{{ kips}}")
-    st.latex(f"V_{{uy}} = {shear_y.get('demand', 0)} \\text{{ kips}}")
+    st.latex(f"V_{{ny}} = {format_val(shear_y.get('Vny', 0))} \\text{{ kips}}")
+    st.latex(f"V_{{uy}} = {format_val(shear_y.get('demand', 0))} \\text{{ kips}}")
     result_card("Ratio", shear_y.get("ratio", 0), "", "PASS" if shear_y.get("ratio", 0) < 1.0 else "FAIL")
 
 
@@ -997,16 +1004,16 @@ render_latex(
     subs={"F_y": mat.get("Fyld", 0), "Z_y": props.get("Zyy", {}).get("value", 0)},
     ref=f"{flex_y.get('ref', '')} (Eq.F6-1)"
 )
-st.latex(f"M_{{ny}} = {flex_y.get('Mny', 0)} \\text{{ kip-in}}")
+st.latex(f"M_{{ny}} = {format_val(flex_y.get('Mny', 0))} \\text{{ kip-in}}")
 
 phi_mny = phi_bend * flex_y.get('Mny', 0)
 render_latex(
     lhs="\phi M_{ny}",
     rhs=f"{phi_bend} \\times M_{{ny}}",
-    subs={"M_{ny}": flex_y.get('Mny', 0)}
+    subs={"M_{ny}": format_val(flex_y.get('Mny', 0))}
 )
-st.latex(f"\phi M_{{ny}} = {phi_mny:.2f} \\text{{ kip-in}}")
-st.latex(f"M_{{uy}} = {flex_y.get('demand', 0)} \\text{{ kip-in}}")
+st.latex(f"\phi M_{{ny}} = {format_val(phi_mny)} \\text{{ kip-in}}")
+st.latex(f"M_{{uy}} = {format_val(flex_y.get('demand', 0))} \\text{{ kip-in}}")
 result_card("Ratio", flex_y.get("ratio", 0), "", "PASS" if flex_y.get("ratio", 0) < 1.0 else "FAIL")
 
 
@@ -1058,16 +1065,16 @@ render_latex(
     },
     ref=f"{ltb_x.get('ref', '')} (Eq.F2-2)"
 )
-st.latex(f"M_{{nx}} = {ltb_x.get('Mnx', 0)} \\text{{ kip-in}}")
+st.latex(f"M_{{nx}} = {format_val(ltb_x.get('Mnx', 0))} \\text{{ kip-in}}")
 
 phi_mnx = phi_bend * ltb_x.get('Mnx', 0)
 render_latex(
     lhs="\phi M_{nx}",
     rhs=f"{phi_bend} \\times M_{{nx}}",
-    subs={"M_{nx}": ltb_x.get('Mnx', 0)}
+    subs={"M_{nx}": format_val(ltb_x.get('Mnx', 0))}
 )
-st.latex(f"\phi M_{{nx}} = {phi_mnx:.2f} \\text{{ kip-in}}")
-st.latex(f"M_{{ux}} = {ltb_x.get('demand', 0)} \\text{{ kip-in}}")
+st.latex(f"\phi M_{{nx}} = {format_val(phi_mnx)} \\text{{ kip-in}}")
+st.latex(f"M_{{ux}} = {format_val(ltb_x.get('demand', 0))} \\text{{ kip-in}}")
 result_card("Ratio", ltb_x.get("ratio", 0), "", "PASS" if ltb_x.get("ratio", 0) < 1.0 else "FAIL")
 
 
@@ -1080,16 +1087,16 @@ render_latex(
     subs={}, 
     ref=f"{flb_x.get('ref', '')} (Eq.F3-1)"
 )
-st.latex(f"M_{{nx}} = {flb_x.get('Mnx', 0)} \\text{{ kip-in}}")
+st.latex(f"M_{{nx}} = {format_val(flb_x.get('Mnx', 0))} \\text{{ kip-in}}")
 
 phi_mnx_flb = phi_bend * flb_x.get('Mnx', 0)
 render_latex(
     lhs="\phi M_{nx}",
     rhs=f"{phi_bend} \\times M_{{nx}}",
-    subs={"M_{nx}": flb_x.get('Mnx', 0)}
+    subs={"M_{nx}": format_val(flb_x.get('Mnx', 0))}
 )
-st.latex(f"\phi M_{{nx}} = {phi_mnx_flb:.2f} \\text{{ kip-in}}")
-st.latex(f"M_{{ux}} = {flb_x.get('demand', 0)} \\text{{ kip-in}}")
+st.latex(f"\phi M_{{nx}} = {format_val(phi_mnx_flb)} \\text{{ kip-in}}")
+st.latex(f"M_{{ux}} = {format_val(flb_x.get('demand', 0))} \\text{{ kip-in}}")
 result_card("Ratio", flb_x.get("ratio", 0), "", "PASS" if flb_x.get("ratio", 0) < 1.0 else "FAIL")
 
 
