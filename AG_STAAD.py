@@ -711,7 +711,7 @@ st.write(f"Effective Slenderness ($L_{{cx}}/r_x$): {comp_x.get('Lcx_rx', 0)}")
 # FeX
 render_latex(
     lhs="F_{ex}",
-    rhs="\\frac{\pi^2 E}{(L_{cx}/r_x)^2}",
+    rhs="\\frac{\pi^2 \\times E}{(L_{cx}/r_x)^2}",
     subs={"E": "29000", "L_{cx}/r_x": comp_x.get('Lcx_rx', 0)},
     ref="Eq.E3-4"
 )
@@ -754,7 +754,7 @@ st.write(f"Effective Slenderness ($L_{{cy}}/r_y$): {comp_y.get('Lcy_ry', 0)}")
 # FeY
 render_latex(
     lhs="F_{ey}",
-    rhs="\\frac{\pi^2 E}{(L_{cy}/r_y)^2}",
+    rhs="\\frac{\pi^2 \\times E}{(L_{cy}/r_y)^2}",
     subs={"E": "29000", "L_{cy}/r_y": comp_y.get('Lcy_ry', 0)},
     ref="Eq.E3-4"
 )
@@ -795,10 +795,41 @@ ftb = checks.get("ftb", {})
 st.markdown("#### Flexural-Torsional Buckling")
 
 # Fe
+# Calculate inputs for Fe (Fez and H) as they are not in report
+E_val = 29000
+G_val = 11200
+Cw_val = props.get("Cw", {}).get("value", 0)
+J_val = props.get("J", {}).get("value", 0)
+Ix_val = props.get("Ixx", {}).get("value", 0)
+Iy_val = props.get("Iyy", {}).get("value", 0)
+Ag_val = props.get("Ag", {}).get("value", 0)
+L_val = par.get("Length", 0)
+
+# Calculate ro2
+ro2 = 0
+if Ag_val > 0:
+    rx2 = Ix_val / Ag_val
+    ry2 = Iy_val / Ag_val
+    ro2 = rx2 + ry2 # Assuming xo = yo = 0 for doubly symmetric
+
+# Calculate Fez
+Fez = 0
+if ro2 > 0 and Ag_val > 0 and L_val > 0:
+    term1 = (3.14159**2 * E_val * Cw_val) / (L_val**2)
+    term2 = G_val * J_val
+    Fez = (term1 + term2) * (1 / (Ag_val * ro2))
+
+# Assume H = 1.0 for doubly symmetric
+H_val = 1.0
+
 render_latex(
     lhs="F_e",
     rhs="\\left( \\frac{F_{ey} + F_{ez}}{2H} \\right) \\left[ 1 - \\sqrt{1 - \\frac{4 F_{ey} F_{ez} H}{(F_{ey} + F_{ez})^2}} \\right]",
-    subs={},
+    subs={
+        "F_{ey}": comp_y.get("Fey", 0),
+        "F_{ez}": f"{Fez:.3f}",
+        "H": H_val
+    },
     ref=f"{ftb.get('ref', '')} (Eq.E4-2)"
 )
 st.latex(f"F_e = {ftb.get('Fe', 0)} \\text{{ ksi}}")
