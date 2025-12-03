@@ -824,7 +824,7 @@ H_val = 1.0
 
 render_latex(
     lhs="F_e",
-    rhs="\\left( \\frac{F_{ey} + F_{ez}}{2\\timesH} \\right) \\left[ 1 - \\sqrt{1 - \\frac{4 F_{ey}\\times F_{ez}\\times H}{(F_{ey} + F_{ez})^2}} \\right]",
+    rhs="\\left( \\frac{F_{ey} + F_{ez}}{2 \\times H} \\right) \\left[ 1 - \\sqrt{1 - \\frac{4 F_{ey}\\times F_{ez}\\times H}{(F_{ey} + F_{ez})^2}} \\right]",
     subs={
         "F_{ey}": comp_y.get("Fey", 0),
         "F_{ez}": f"{Fez:.3f}",
