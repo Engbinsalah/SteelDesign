@@ -105,26 +105,6 @@ def parse_staad_report(text):
         if "Cw  :" in line:
             data["properties"]["Cw"] = {"value": parse_value(line, "Cw"), "unit": "in⁶"}
             
-        # Material
-        if "Fyld:" in line:
-            data["material"]["Fyld"] = parse_value(line, "Fyld")
-            data["material"]["Fu"] = parse_value(line, "Fu")
-            
-        # Parameters
-        if "Actual Member Length:" in line:
-            data["params"]["Length"] = parse_value(line, "Actual Member Length")
-        if "Kx:" in line:
-            data["params"]["Kx"] = parse_value(line, "Kx")
-            data["params"]["Ky"] = parse_value(line, "Ky")
-            
-        # Section Detection
-        if "TENSILE YIELDING" in line: current_section = "tens_yield"
-        elif "TENSILE RUPTURE" in line: current_section = "tens_rup"
-        elif "FLEXURAL BUCKLING X" in line: current_section = "comp_x"
-        elif "FLEXURAL BUCKLING Y" in line: current_section = "comp_y"
-        elif "FLEXURAL-TORSIONAL-BUCKLING" in line: current_section = "ftb"
-        elif "SHEAR ALONG X" in line: current_section = "shear_x"
-        elif "SHEAR ALONG Y" in line: current_section = "shear_y"
         elif "FLEXURAL YIELDING (Y)" in line: current_section = "flex_y"
         elif "LAT TOR BUCK ABOUT X" in line: current_section = "ltb_x"
         elif "FLANGE LOCAL BUCK(X)" in line: current_section = "flb_x"
@@ -372,6 +352,9 @@ default_member_data = {
         "Length": 121.000,
         "Kx": 2.00,
         "Ky": 2.00,
+        "NSF": 1.00,
+        "SLF": 1.00,
+        "CSP": 12.00,
         "Cb": 1.00
     },
     "classification": {
@@ -556,9 +539,10 @@ with c2:
     st.write(f"- Ultimate Strength ($F_u$): {mat.get('Fu', 0)} ksi")
     
     st.markdown("**Design Parameters**")
-    st.write(f"- Length: {par.get('Length', 0)} in")
+    st.write(f"- Actual Member Length: {par.get('Length', 0)} in")
     st.write(f"- Effective Length Factors: $K_x={par.get('Kx', 0)}, K_y={par.get('Ky', 0)}$")
     st.write(f"- LTB Modification Factor ($C_b$): {par.get('Cb', 1.0)}")
+    st.write(f"- Other Parameters: NSF={par.get('NSF', 1.0)}, SLF={par.get('SLF', 1.0)}, CSP={par.get('CSP', 0)}")
 
 # --- 1.4 Classification ---
 st.header("1.4 Slenderness Classification")
@@ -804,23 +788,69 @@ Ix_val = props.get("Ixx", {}).get("value", 0)
 Iy_val = props.get("Iyy", {}).get("value", 0)
 Ag_val = props.get("Ag", {}).get("value", 0)
 L_val = par.get("Length", 0)
+Kz = 1.0 # Assumption for torsional buckling effective length factor
+Lcz = Kz * L_val
 
-# Calculate ro2
-ro2 = 0
+# Coordinates of shear center with respect to centroid (Assumed 0 for doubly symmetric)
+xo = 0.0
+yo = 0.0
+
+# 1. Polar Radius of Gyration (ro_bar^2) - Eq. E4-9
+st.markdown("**1. Polar Radius of Gyration ($\overline{r}_o^2$)**")
+ro2_val = 0
 if Ag_val > 0:
-    rx2 = Ix_val / Ag_val
-    ry2 = Iy_val / Ag_val
-    ro2 = rx2 + ry2 # Assuming xo = yo = 0 for doubly symmetric
+    ro2_val = xo**2 + yo**2 + (Ix_val + Iy_val) / Ag_val
 
-# Calculate Fez
-Fez = 0
-if ro2 > 0 and Ag_val > 0 and L_val > 0:
-    term1 = (3.14159**2 * E_val * Cw_val) / (L_val**2)
-    term2 = G_val * J_val
-    Fez = (term1 + term2) * (1 / (Ag_val * ro2))
+render_latex(
+    lhs="\overline{r}_o^2",
+    rhs="x_o^2 + y_o^2 + \\frac{I_x + I_y}{A_g}",
+    subs={
+        "x_o": xo, "y_o": yo,
+        "I_x": Ix_val, "I_y": Iy_val,
+        "A_g": Ag_val
+    },
+    ref="Eq. E4-9"
+)
+st.latex(f"\overline{{r}}_o^2 = {ro2_val:.3f} \\text{{ in}}^2")
 
-# Assume H = 1.0 for doubly symmetric
+
+# 2. Flexural Constant (H) - Eq. E4-8
+st.markdown("**2. Flexural Constant ($H$)**")
 H_val = 1.0
+if ro2_val > 0:
+    H_val = 1 - (xo**2 + yo**2) / ro2_val
+
+render_latex(
+    lhs="H",
+    rhs="1 - \\frac{x_o^2 + y_o^2}{\overline{r}_o^2}",
+    subs={
+        "x_o": xo, "y_o": yo,
+        "\overline{r}_o^2": f"{ro2_val:.3f}"
+    },
+    ref="Eq. E4-8"
+)
+st.latex(f"H = {H_val:.3f}")
+
+
+# 3. Torsional Elastic Buckling Stress (Fez) - Eq. E4-7
+st.markdown("**3. Torsional Elastic Buckling Stress ($F_{ez}$)**")
+Fez = 0
+if ro2_val > 0 and Ag_val > 0 and Lcz > 0:
+    term1 = (3.14159**2 * E_val * Cw_val) / (Lcz**2)
+    term2 = G_val * J_val
+    Fez = (term1 + term2) * (1 / (Ag_val * ro2_val))
+
+render_latex(
+    lhs="F_{ez}",
+    rhs="\\left( \\frac{\pi^2 \\times E C_w}{L_{cz}^2} + G J \\right) \\frac{1}{A_g \overline{r}_o^2}",
+    subs={
+        "E": E_val, "C_w": Cw_val, "L_{cz}": f"{Lcz:.2f}",
+        "G": G_val, "J": J_val,
+        "A_g": Ag_val, "\overline{r}_o^2": f"{ro2_val:.3f}"
+    },
+    ref="Eq. E4-7"
+)
+st.latex(f"F_{{ez}} = {Fez:.3f} \\text{{ ksi}}")
 
 # Fe (Using Fex)
 st.markdown("**Case 1: Axis of Symmetry = X-Axis (using $F_{ex}$)**")
