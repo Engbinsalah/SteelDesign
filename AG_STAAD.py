@@ -842,7 +842,7 @@ if ro2_val > 0 and Ag_val > 0 and Lcz > 0:
 
 render_latex(
     lhs="F_{ez}",
-    rhs="\\left( \\frac{\pi^2 \\times E C_w}{L_{cz}^2} + G J \\right) \\frac{1}{A_g \overline{r}_o^2}",
+    rhs="\\left( \\frac{\pi^2 \\times E C_w}{L_{cz}^2} + G \\times J \\right) \\frac{1}{A_g \\times \overline{r}_o^2}",
     subs={
         "E": E_val, "C_w": Cw_val, "L_{cz}": f"{Lcz:.2f}",
         "G": G_val, "J": J_val,
