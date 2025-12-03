@@ -1,196 +1,375 @@
+
 import streamlit as st
 import pandas as pd
 import re
 import math
 
 # ==========================================
-# 1. CONFIG & CSS
+# 1. PARSING LOGIC
 # ==========================================
-st.set_page_config(page_title="STAAD Design Check (Auto-Calc)", layout="wide")
-
-st.markdown("""
-<style>
-    .main { background-color: #ffffff; color: #333; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
-    h1, h2, h3 { color: #2c3e50; }
-    .stTextArea textarea { font-family: 'Consolas', 'Courier New', monospace; font-size: 14px; }
-    .stAlert { padding: 10px; border-radius: 5px; }
-    .metric-card { background-color: #f8f9fa; padding: 15px; border-radius: 8px; border: 1px solid #e9ecef; box-shadow: 0 2px 4px rgba(0,0,0,0.05); text-align: center; }
-    .metric-label { font-size: 14px; color: #6c757d; margin-bottom: 5px; }
-    .metric-value { font-size: 24px; font-weight: 600; color: #2c3e50; }
-</style>
-""", unsafe_allow_html=True)
-
-# ==========================================
-# 2. HELPER FUNCTIONS
-# ==========================================
-def format_val(val, decimals=2):
-    try:
-        f_val = float(val)
-        if abs(f_val) < 1 and f_val != 0:
-            return f"{f_val:.3f}"
-        return f"{f_val:.{decimals}f}"
-    except (ValueError, TypeError):
-        return str(val)
-
-def render_latex(lhs, rhs, subs=None, ref=None):
-    if ref:
-        st.markdown(f"**Reference:** {ref}")
-    st.latex(f"{lhs} = {rhs}")
-    if subs:
-        sub_rhs = rhs
-        for key, value in subs.items():
-            sub_rhs = sub_rhs.replace(key, f"{value}")
-        st.latex(f"{lhs} = {sub_rhs}")
-
-def result_card(label, value, unit, status=None):
-    color = "green" if status == "PASS" else "red" if status == "FAIL" else "black"
-    st.markdown(
-        f"""
-        <div style="padding: 10px; border: 1px solid #ddd; border-radius: 5px; margin-bottom: 10px; background-color: #f9f9f9;">
-            <strong>{label}</strong>: {value} {unit} 
-            {f'<span style="color:{color}; font-weight:bold; float:right">{status}</span>' if status else ''}
-        </div>
-        """,
-        unsafe_allow_html=True
-    )
-
 def parse_value(line, key):
-    """Helper to extract value after a key (e.g., 'Pz:')"""
-    pattern = re.escape(key) + r"\s*[:=]\s*([-+]?\d*\.?\d+(?:[Ee][-+]?\d+)?)"
-    match = re.search(pattern, line, re.IGNORECASE)
+    """Helper to extract a float value after a key in a line."""
+    # Look for key followed by : or = and then a number (possibly scientific)
+    # We handle cases like "Pz: 6.830" or "Ag : 9.130E+00"
+    match = re.search(rf"{key}\s*[:=]\s*([-\d.E+]+)", line)
     if match:
-        return float(match.group(1))
-    return None
+        try:
+            return float(match.group(1))
+        except ValueError:
+            return 0.0
+    return 0.0
 
-# ==========================================
-# 3. PARSING LOGIC (INPUTS ONLY)
-# ==========================================
-def parse_staad_inputs(text):
+def parse_staad_report(text):
     data = {
-        "id": "Unknown", "profile": "Unknown", "loadcase": "Unknown",
-        "forces": {}, "properties": {}, "material": {}, "params": {}, "classification": {}
+        "id": "Unknown", "profile": "Unknown", "status": "Unknown", "ratio": 0.0, "loadcase": "Unknown",
+        "forces": {}, "properties": {}, "material": {}, "params": {}, "checks": {}
     }
     
-    # Defaults
-    data["params"] = {"Kx": 1.0, "Ky": 1.0, "Cb": 1.0, "NSF": 1.0, "SLF": 1.0, "CSP": 0.0, "Length": 0.0}
-    data["material"] = {"Fyld": 50.0, "Fu": 65.0}
-    
     lines = text.split('\n')
+    
+    # Initialize checks structure with defaults
+    checks = {
+        "tension_yielding": {"demand": 0, "capacity": 0, "ratio": 0, "ref": "", "Pn": 0, "eqn": ""},
+        "tension_rupture": {"demand": 0, "capacity": 0, "ratio": 0, "ref": "", "Ae": 0, "Pn": 0, "eqn": ""},
+        "compression_x": {"demand": 0, "capacity": 0, "ratio": 0, "ref": "", "Lcx_rx": 0, "Fex": 0, "Fcrx": 0, "Pnx": 0},
+        "compression_y": {"demand": 0, "capacity": 0, "ratio": 0, "ref": "", "Lcy_ry": 0, "Fey": 0, "Fcry": 0, "Pny": 0},
+        "ftb": {"demand": 0, "capacity": 0, "ratio": 0, "ref": "", "Fe": 0, "Fcr": 0, "Pn": 0},
+        "shear_x": {"demand": 0, "capacity": 0, "ratio": 0, "ref": "", "Cv": 0, "Vnx": 0},
+        "shear_y": {"demand": 0, "capacity": 0, "ratio": 0, "ref": "", "Cv": 0, "Vny": 0},
+        "ltb_x": {"demand": 0, "capacity": 0, "ratio": 0, "ref": "", "Mnx": 0, "Cb": 1.0, "Lp": 0, "Lr": 0, "Rts": 0},
+        "flb_x": {"demand": 0, "capacity": 0, "ratio": 0, "ref": "", "Mnx": 0},
+        "flb_y": {"demand": 0, "capacity": 0, "ratio": 0, "ref": "", "Mny": 0},
+        "flexure_y": {"demand": 0, "capacity": 0, "ratio": 0, "ref": "", "Mny": 0},
+        "interaction": {"ratio": 0, "criteria": "", "Pc": 0, "Mcx": 0, "Mcy": 0}
+    }
+
+    # Initialize classification structure
+    classification = {
+        "compression": {
+            "flange": {"status": "", "lambda": 0, "lambda_p": "N/A", "lambda_r": 0, "case": ""},
+            "web": {"status": "", "lambda": 0, "lambda_p": "N/A", "lambda_r": 0, "case": ""}
+        },
+        "flexure": {
+            "flange": {"status": "", "lambda": 0, "lambda_p": 0, "lambda_r": 0, "case": ""},
+            "web": {"status": "", "lambda": 0, "lambda_p": 0, "lambda_r": 0, "case": ""}
+        }
+    }
+    data["classification"] = classification
+    
     current_section = None
     
     for line in lines:
         line = line.strip()
         if not line: continue
-        
-        # Header Info
+
+        # General Info
         if "Member No:" in line:
             m = re.search(r"Member No:\s+(\d+)", line)
             if m: data["id"] = m.group(1)
             m = re.search(r"Profile:\s+(.*?)\s+\(", line)
             if m: data["profile"] = m.group(1).strip()
-        if "Loadcase:" in line:
+            
+        if "Status:" in line:
+            m = re.search(r"Status:\s+(\w+)", line)
+            if m: data["status"] = m.group(1)
+            val = parse_value(line, "Ratio")
+            if val: data["ratio"] = val
             m = re.search(r"Loadcase:\s+(\d+)", line)
             if m: data["loadcase"] = m.group(1)
             
         # Forces
         if "Pz:" in line:
-            data["forces"]["Pz"] = parse_value(line, "Pz")
-            data["forces"]["Vy"] = parse_value(line, "Vy")
-            data["forces"]["Vx"] = parse_value(line, "Vx")
+            data["forces"]["Pz"] = {"value": parse_value(line, "Pz"), "unit": "kips", "desc": "Axial Compression"}
+            data["forces"]["Vy"] = {"value": parse_value(line, "Vy"), "unit": "kips", "desc": "Shear Y"}
+            data["forces"]["Vx"] = {"value": parse_value(line, "Vx"), "unit": "kips", "desc": "Shear X"}
         if "Tz:" in line:
-            data["forces"]["Tz"] = parse_value(line, "Tz")
-            data["forces"]["My"] = parse_value(line, "My")
-            data["forces"]["Mx"] = parse_value(line, "Mx")
+            data["forces"]["Tz"] = {"value": parse_value(line, "Tz"), "unit": "kip-in", "desc": "Torsion"}
+            data["forces"]["My"] = {"value": parse_value(line, "My"), "unit": "kip-in", "desc": "Moment Y"}
+            data["forces"]["Mx"] = {"value": parse_value(line, "Mx"), "unit": "kip-in", "desc": "Moment X"}
             
         # Properties
         if "Ag" in line and (":" in line or "=" in line):
-            data["properties"]["Ag"] = parse_value(line, "Ag")
-            data["properties"]["Axx"] = parse_value(line, "Axx")
-            data["properties"]["Ayy"] = parse_value(line, "Ayy")
+            val = parse_value(line, "Ag")
+            if val: data["properties"]["Ag"] = {"value": val, "unit": "in²"}
+            val = parse_value(line, "Axx")
+            if val: data["properties"]["Axx"] = {"value": val, "unit": "in²"}
+            val = parse_value(line, "Ayy")
+            if val: data["properties"]["Ayy"] = {"value": val, "unit": "in²"}
         if "Ixx" in line and (":" in line or "=" in line):
-            data["properties"]["Ixx"] = parse_value(line, "Ixx")
-            data["properties"]["Iyy"] = parse_value(line, "Iyy")
-            data["properties"]["J"] = parse_value(line, "J")
+            val = parse_value(line, "Ixx")
+            if val: data["properties"]["Ixx"] = {"value": val, "unit": "in⁴"}
+            val = parse_value(line, "Iyy")
+            if val: data["properties"]["Iyy"] = {"value": val, "unit": "in⁴"}
+            val = parse_value(line, "J")
+            if val: data["properties"]["J"] = {"value": val, "unit": "in⁴"}
         if "Sxx" in line and (":" in line or "=" in line):
-            data["properties"]["Sxx"] = parse_value(line, "Sxx+") 
-            data["properties"]["Zxx"] = parse_value(line, "Zxx")
+            # Escape + for regex
+            val = parse_value(line, r"Sxx\+")
+            if val: data["properties"]["Sxx"] = {"value": val, "unit": "in³"} 
+            val = parse_value(line, "Zxx")
+            if val: data["properties"]["Zxx"] = {"value": val, "unit": "in³"}
         if "Syy" in line and (":" in line or "=" in line):
-            data["properties"]["Syy"] = parse_value(line, "Syy+")
-            data["properties"]["Zyy"] = parse_value(line, "Zyy")
+            val = parse_value(line, r"Syy\+")
+            if val: data["properties"]["Syy"] = {"value": val, "unit": "in³"}
+            val = parse_value(line, "Zyy")
+            if val: data["properties"]["Zyy"] = {"value": val, "unit": "in³"}
         if "Cw" in line and (":" in line or "=" in line):
-            data["properties"]["Cw"] = parse_value(line, "Cw")
-            
+            val = parse_value(line, "Cw")
+            if val: data["properties"]["Cw"] = {"value": val, "unit": "in⁶"}
+        if "Cw" in line and (":" in line or "=" in line):
+            val = parse_value(line, "Cw")
+            if val: data["properties"]["Cw"] = {"value": val, "unit": "in⁶"}
+
         # Material
-        if "Fyld:" in line or "Fyld" in line:
+        if "Fyld" in line:
             val = parse_value(line, "Fyld")
             if val: data["material"]["Fyld"] = val
             val = parse_value(line, "Fu")
             if val: data["material"]["Fu"] = val
-            
+
         # Parameters
-        if "Actual Member Length:" in line:
+        if "Actual Member Length" in line:
             data["params"]["Length"] = parse_value(line, "Actual Member Length")
-        if "Kx:" in line:
-            data["params"]["Kx"] = parse_value(line, "Kx")
-            data["params"]["Ky"] = parse_value(line, "Ky")
-            data["params"]["NSF"] = parse_value(line, "NSF")
-            data["params"]["SLF"] = parse_value(line, "SLF")
-            data["params"]["CSP"] = parse_value(line, "CSP")
-            
-        # Classification
-        if "COMPRESSION CLASSIFICATION" in line: current_section = "class_comp"
+
+        if "Design Parameters" in line: current_section = "params"
+        elif "FLEXURAL YIELDING (Y)" in line: current_section = "flex_y"
+        elif "LAT TOR BUCK ABOUT X" in line: current_section = "ltb_x"
+        elif "FLANGE LOCAL BUCK(X)" in line: current_section = "flb_x"
+        elif "FLANGE LOCAL BUCK(Y)" in line: current_section = "flb_y"
+        elif "COMBINED FORCES CLAUSE H1" in line: current_section = "inter"
+        elif "COMPRESSION CLASSIFICATION" in line: current_section = "class_comp"
         elif "FLEXURE CLASSIFICATION" in line: current_section = "class_flex"
+
+        # Parsing based on section
+        # We look for lines that contain specific keywords or patterns
         
-        if current_section == "class_comp":
-            if "Flange:" in line:
-                m = re.search(r"Flange:\s+(\w+)\s+([\d.]+)", line)
-                if m: 
-                    if "compression" not in data["classification"]: data["classification"]["compression"] = {}
-                    data["classification"]["compression"]["flange"] = {"status": m.group(1), "lambda": float(m.group(2))}
-            if "Web" in line and ":" in line:
-                m = re.search(r"Web\s*:\s+(\w+)\s+([\d.]+)", line)
-                if m:
-                    if "compression" not in data["classification"]: data["classification"]["compression"] = {}
-                    data["classification"]["compression"]["web"] = {"status": m.group(1), "lambda": float(m.group(2))}
+        if current_section == "tens_yield":
+            if "Cl.D" in line and "DEMAND" not in line:
+                 vals = re.findall(r"[-+]?\d*\.\d+|\d+", line)
+                 if len(vals) >= 3:
+                     checks["tension_yielding"]["demand"] = float(vals[0])
+                     checks["tension_yielding"]["capacity"] = float(vals[1])
+                     checks["tension_yielding"]["ratio"] = float(vals[2])
+                     checks["tension_yielding"]["ref"] = "Cl.D2"
+            if "Nom. Ten. Yld Cap" in line:
+                checks["tension_yielding"]["Pn"] = parse_value(line, "Pn")
+                m = re.search(r"(Eq\.[-\w]+)", line)
+                if m: checks["tension_yielding"]["eqn"] = m.group(1)
 
-        if current_section == "class_flex":
-            if "Flange:" in line:
-                m = re.search(r"Flange:\s+(\w+)\s+([\d.]+)", line)
-                if m: 
-                    if "flexure" not in data["classification"]: data["classification"]["flexure"] = {}
-                    data["classification"]["flexure"]["flange"] = {"status": m.group(1), "lambda": float(m.group(2))}
-            if "Web" in line and ":" in line:
-                m = re.search(r"Web\s*:\s+(\w+)\s+([\d.]+)", line)
-                if m:
-                    if "flexure" not in data["classification"]: data["classification"]["flexure"] = {}
-                    data["classification"]["flexure"]["web"] = {"status": m.group(1), "lambda": float(m.group(2))}
+        elif current_section == "tens_rup":
+            if "Cl.D" in line and "DEMAND" not in line:
+                 vals = re.findall(r"[-+]?\d*\.\d+|\d+", line)
+                 if len(vals) >= 3:
+                     checks["tension_rupture"]["demand"] = float(vals[0])
+                     checks["tension_rupture"]["capacity"] = float(vals[1])
+                     checks["tension_rupture"]["ratio"] = float(vals[2])
+                     checks["tension_rupture"]["ref"] = "Cl.D2"
+            if "Effective area" in line: checks["tension_rupture"]["Ae"] = parse_value(line, "Ae")
+            if "Nom. Ten. Rpt Cap" in line: 
+                checks["tension_rupture"]["Pn"] = parse_value(line, "Pn")
+                m = re.search(r"(Eq\.[-\w]+)", line)
+                if m: checks["tension_rupture"]["eqn"] = m.group(1)
 
+        elif current_section == "comp_x":
+            if "Cl.E" in line and "DEMAND" not in line:
+                 vals = re.findall(r"[-+]?\d*\.\d+|\d+", line)
+                 if len(vals) >= 3:
+                     checks["compression_x"]["demand"] = float(vals[0])
+                     checks["compression_x"]["capacity"] = float(vals[1])
+                     checks["compression_x"]["ratio"] = float(vals[2])
+                     checks["compression_x"]["ref"] = "Cl.E3"
+            if "Effective Slenderness" in line: checks["compression_x"]["Lcx_rx"] = parse_value(line, "Lcx/rx")
+            if "Elastic Buckling Stress" in line: checks["compression_x"]["Fex"] = parse_value(line, "Fex")
+            if "Crit. Buckling Stress" in line: checks["compression_x"]["Fcrx"] = parse_value(line, "Fcrx")
+            if "Nom. Flexural Buckling" in line: checks["compression_x"]["Pnx"] = parse_value(line, "Pnx")
+
+        elif current_section == "comp_y":
+            if "Cl.E" in line and "DEMAND" not in line:
+                 vals = re.findall(r"[-+]?\d*\.\d+|\d+", line)
+                 if len(vals) >= 3:
+                     checks["compression_y"]["demand"] = float(vals[0])
+                     checks["compression_y"]["capacity"] = float(vals[1])
+                     checks["compression_y"]["ratio"] = float(vals[2])
+                     checks["compression_y"]["ref"] = "Cl.E3"
+            if "Effective Slenderness" in line: checks["compression_y"]["Lcy_ry"] = parse_value(line, "Lcy/ry")
+            if "Elastic Buckling Stress" in line: checks["compression_y"]["Fey"] = parse_value(line, "Fey")
+            if "Crit. Buckling Stress" in line: checks["compression_y"]["Fcry"] = parse_value(line, "Fcry")
+            if "Nom. Flexural Buckling" in line: checks["compression_y"]["Pny"] = parse_value(line, "Pny")
+
+        elif current_section == "ftb":
+            if "Cl.E" in line and "DEMAND" not in line:
+                 vals = re.findall(r"[-+]?\d*\.\d+|\d+", line)
+                 if len(vals) >= 3:
+                     checks["ftb"]["demand"] = float(vals[0])
+                     checks["ftb"]["capacity"] = float(vals[1])
+                     checks["ftb"]["ratio"] = float(vals[2])
+                     checks["ftb"]["ref"] = "Cl.E4"
+            if "Elastic F-T-B Stress" in line: checks["ftb"]["Fe"] = parse_value(line, "Fe")
+            if "Crit. F-T-B Stress" in line: checks["ftb"]["Fcr"] = parse_value(line, "Fcr")
+            if "Nom. Flex-tor Buckling" in line: checks["ftb"]["Pn"] = parse_value(line, "Pn")
+
+        elif current_section == "shear_x":
+            if "Cl.G" in line and "DEMAND" not in line:
+                 vals = re.findall(r"[-+]?\d*\.\d+|\d+", line)
+                 if len(vals) >= 3:
+                     checks["shear_x"]["demand"] = float(vals[0])
+                     checks["shear_x"]["capacity"] = float(vals[1])
+                     checks["shear_x"]["ratio"] = float(vals[2])
+                     checks["shear_x"]["ref"] = "Cl.G1"
+            if "Coefficient Cv" in line: checks["shear_x"]["Cv"] = parse_value(line, "Cv")
+            if "Nom. Shear Along X" in line: checks["shear_x"]["Vnx"] = parse_value(line, "Vnx")
+
+        elif current_section == "shear_y":
+            if "Cl.G" in line and "DEMAND" not in line:
+                 vals = re.findall(r"[-+]?\d*\.\d+|\d+", line)
+                 if len(vals) >= 3:
+                     checks["shear_y"]["demand"] = float(vals[0])
+                     checks["shear_y"]["capacity"] = float(vals[1])
+                     checks["shear_y"]["ratio"] = float(vals[2])
+                     checks["shear_y"]["ref"] = "Cl.G1"
+            if "Coefficient Cv" in line: checks["shear_y"]["Cv"] = parse_value(line, "Cv")
+            if "Nom. Shear Along Y" in line: checks["shear_y"]["Vny"] = parse_value(line, "Vny")
+
+        elif current_section == "flex_y":
+            if "Cl.F" in line and "DEMAND" not in line:
+                 vals = re.findall(r"[-+]?\d*\.\d+|\d+", line)
+                 if len(vals) >= 3:
+                     checks["flexure_y"]["demand"] = float(vals[0])
+                     checks["flexure_y"]["capacity"] = float(vals[1])
+                     checks["flexure_y"]["ratio"] = float(vals[2])
+                     checks["flexure_y"]["ref"] = "Cl.F6.1"
+            if "Nom Flex Yielding" in line: checks["flexure_y"]["Mny"] = parse_value(line, "Mny")
+
+        elif current_section == "ltb_x":
+            if "Cl.F" in line and "DEMAND" not in line:
+                 vals = re.findall(r"[-+]?\d*\.\d+|\d+", line)
+                 if len(vals) >= 3:
+                     checks["ltb_x"]["demand"] = float(vals[0])
+                     checks["ltb_x"]["capacity"] = float(vals[1])
+                     checks["ltb_x"]["ratio"] = float(vals[2])
+                     checks["ltb_x"]["ref"] = "Cl.F2.2"
+            if "Nom L-T-B Cap" in line: checks["ltb_x"]["Mnx"] = parse_value(line, "Mnx")
+            if "Mom. Distr. factor" in line: checks["ltb_x"]["Cb"] = parse_value(line, "CbX")
+            if "Limiting Unbraced Length" in line and "LpX" in line: checks["ltb_x"]["Lp"] = parse_value(line, "LpX")
+            if "Limiting Unbraced Length" in line and "LrX" in line: checks["ltb_x"]["Lr"] = parse_value(line, "LrX")
+            if "Effective Rad. of Gyr." in line: checks["ltb_x"]["Rts"] = parse_value(line, "Rts")
+
+        elif current_section == "flb_x":
+            if "Cl.F" in line and "DEMAND" not in line:
+                 vals = re.findall(r"[-+]?\d*\.\d+|\d+", line)
+                 if len(vals) >= 3:
+                     checks["flb_x"]["demand"] = float(vals[0])
+                     checks["flb_x"]["capacity"] = float(vals[1])
+                     checks["flb_x"]["ratio"] = float(vals[2])
+                     checks["flb_x"]["ref"] = "Cl.F3.1"
+            if "Nom F-L-B Cap" in line: checks["flb_x"]["Mnx"] = parse_value(line, "Mnx")
+
+        elif current_section == "flb_y":
+            if "Cl.F" in line and "DEMAND" not in line:
+                 vals = re.findall(r"[-+]?\d*\.\d+|\d+", line)
+                 if len(vals) >= 3:
+                     checks["flb_y"]["demand"] = float(vals[0])
+                     checks["flb_y"]["capacity"] = float(vals[1])
+                     checks["flb_y"]["ratio"] = float(vals[2])
+                     checks["flb_y"]["ref"] = "Cl.F6.2"
+            if "Nom F-L-B Cap" in line: checks["flb_y"]["Mny"] = parse_value(line, "Mny")
+
+        elif current_section == "inter":
+            if "Eq.H1" in line and "RATIO" not in line:
+                # 0.218 Eq.H1-1b 1006 0.00
+                vals = re.findall(r"[-+]?\d*\.\d+|\d+", line)
+                if len(vals) >= 1:
+                    checks["interaction"]["ratio"] = float(vals[0])
+                m = re.search(r"(Eq\.H1[-\w]+)", line)
+                if m: checks["interaction"]["criteria"] = m.group(1)
+            if "Axial Capacity" in line: checks["interaction"]["Pc"] = parse_value(line, "Pc")
+            if "Moment Capacity" in line and "Mcx" in line: checks["interaction"]["Mcx"] = parse_value(line, "Mcx")
+            if "Moment Capacity" in line and "Mcy" in line: checks["interaction"]["Mcy"] = parse_value(line, "Mcy")
+
+        elif current_section == "class_comp":
+            # Flange: NonSlender       9.20       N/A      13.49     Table.4.1a.Case1
+            if "Flange:" in line:
+                m = re.search(r"Flange:\s+(\w+)\s+([\d.]+)\s+(N/A|[\d.]+)\s+(N/A|[\d.]+)\s+([\w.]+)", line)
+                if m:
+                    data["classification"]["compression"]["flange"] = {
+                        "status": m.group(1), "lambda": float(m.group(2)), 
+                        "lambda_p": m.group(3), "lambda_r": float(m.group(4)) if m.group(4) != "N/A" else "N/A",
+                        "case": m.group(5)
+                    }
+            if "Web   :" in line:
+                m = re.search(r"Web\s+:\s+(\w+)\s+([\d.]+)\s+(N/A|[\d.]+)\s+(N/A|[\d.]+)\s+([\w.]+)", line)
+                if m:
+                    data["classification"]["compression"]["web"] = {
+                        "status": m.group(1), "lambda": float(m.group(2)), 
+                        "lambda_p": m.group(3), "lambda_r": float(m.group(4)) if m.group(4) != "N/A" else "N/A",
+                        "case": m.group(5)
+                    }
+
+        elif current_section == "class_flex":
+            # Flange: NonCompact       9.20       9.15     24.08     Table.4.1b.Case10
+            if "Flange:" in line:
+                m = re.search(r"Flange:\s+(\w+)\s+([\d.]+)\s+(N/A|[\d.]+)\s+(N/A|[\d.]+)\s+([\w.]+)", line)
+                if m:
+                    data["classification"]["flexure"]["flange"] = {
+                        "status": m.group(1), "lambda": float(m.group(2)), 
+                        "lambda_p": float(m.group(3)) if m.group(3) != "N/A" else "N/A", 
+                        "lambda_r": float(m.group(4)) if m.group(4) != "N/A" else "N/A",
+                        "case": m.group(5)
+                    }
+            if "Web   :" in line:
+                m = re.search(r"Web\s+:\s+(\w+)\s+([\d.]+)\s+(N/A|[\d.]+)\s+(N/A|[\d.]+)\s+([\w.]+)", line)
+                if m:
+                    data["classification"]["flexure"]["web"] = {
+                        "status": m.group(1), "lambda": float(m.group(2)), 
+                        "lambda_p": float(m.group(3)) if m.group(3) != "N/A" else "N/A", 
+                        "lambda_r": float(m.group(4)) if m.group(4) != "N/A" else "N/A",
+                        "case": m.group(5)
+                    }
+
+
+
+        elif current_section == "params":
+            if "Kx" in line: data["params"]["Kx"] = parse_value(line, "Kx")
+            if "Ky" in line: data["params"]["Ky"] = parse_value(line, "Ky")
+            if "NSF" in line: data["params"]["NSF"] = parse_value(line, "NSF")
+            if "SLF" in line: data["params"]["SLF"] = parse_value(line, "SLF")
+            if "CSP" in line: data["params"]["CSP"] = parse_value(line, "CSP")
+            if "Cb" in line: data["params"]["Cb"] = parse_value(line, "Cb")
+
+    # Fallback for Cb if not found in LTB section (sometimes in params)
+    if checks["ltb_x"]["Cb"] == 1.0 and "Cb" in data["params"]:
+        pass
+    else:
+        data["params"]["Cb"] = checks["ltb_x"]["Cb"]
+
+    data["checks"] = checks
+    
+    # --- AUTO-CALCULATION ---
+    calculate_results(data)
+    
     return data
 
-# ==========================================
-# 4. CALCULATION ENGINE
-# ==========================================
-def calculate_checks(data):
-    results = {}
+def calculate_results(data):
+    checks = data["checks"]
     
     # Inputs
     E = 29000.0
     G = 11200.0
-    Fy = data["material"]["Fyld"]
-    Fu = data["material"]["Fu"]
+    Fy = data["material"].get("Fyld", 50.0)
+    Fu = data["material"].get("Fu", 65.0)
     
     props = data["properties"]
-    Ag = props.get("Ag", 0)
-    Ixx = props.get("Ixx", 0)
-    Iyy = props.get("Iyy", 0)
-    J = props.get("J", 0)
-    Cw = props.get("Cw", 0)
-    Sxx = props.get("Sxx", 0)
-    Syy = props.get("Syy", 0)
-    Zxx = props.get("Zxx", 0)
-    Zyy = props.get("Zyy", 0)
-    Axx = props.get("Axx", 0) # Shear area X
-    Ayy = props.get("Ayy", 0) # Shear area Y
+    Ag = props.get("Ag", {}).get("value", 0)
+    Ixx = props.get("Ixx", {}).get("value", 0)
+    Iyy = props.get("Iyy", {}).get("value", 0)
+    J = props.get("J", {}).get("value", 0)
+    Cw = props.get("Cw", {}).get("value", 0)
+    Sxx = props.get("Sxx", {}).get("value", 0)
+    Syy = props.get("Syy", {}).get("value", 0)
+    Zxx = props.get("Zxx", {}).get("value", 0)
+    Zyy = props.get("Zyy", {}).get("value", 0)
+    Axx = props.get("Axx", {}).get("value", 0) # Shear area X
+    Ayy = props.get("Ayy", {}).get("value", 0) # Shear area Y
     
     params = data["params"]
     L = params.get("Length", 0)
@@ -201,11 +380,11 @@ def calculate_checks(data):
     SLF = params.get("SLF", 1.0)
     
     forces = data["forces"]
-    Pu = abs(forces.get("Pz", 0))
-    Vux = abs(forces.get("Vx", 0))
-    Vuy = abs(forces.get("Vy", 0))
-    Mux = abs(forces.get("Mx", 0))
-    Muy = abs(forces.get("My", 0))
+    Pu = abs(forces.get("Pz", {}).get("value", 0))
+    Vux = abs(forces.get("Vx", {}).get("value", 0))
+    Vuy = abs(forces.get("Vy", {}).get("value", 0))
+    Mux = abs(forces.get("Mx", {}).get("value", 0))
+    Muy = abs(forces.get("My", {}).get("value", 0))
     
     # Derived
     rx = (Ixx/Ag)**0.5 if Ag > 0 else 0
@@ -217,13 +396,22 @@ def calculate_checks(data):
     # Yielding
     Pn_yield = Fy * Ag
     phi_Pn_yield = 0.9 * Pn_yield
-    results["tension_yielding"] = {"Pn": Pn_yield, "phi_Pn": phi_Pn_yield, "demand": Pu, "ratio": Pu/phi_Pn_yield if phi_Pn_yield else 0}
+    checks["tension_yielding"]["Pn"] = Pn_yield
+    checks["tension_yielding"]["capacity"] = phi_Pn_yield
+    checks["tension_yielding"]["demand"] = Pu
+    checks["tension_yielding"]["ratio"] = Pu/phi_Pn_yield if phi_Pn_yield else 0
+    checks["tension_yielding"]["eqn"] = "Eq.D2-1"
     
     # Rupture
-    Ae = Ag * NSF * SLF # Simplified assumption based on params
+    Ae = Ag * NSF * SLF 
     Pn_rup = Fu * Ae
     phi_Pn_rup = 0.75 * Pn_rup
-    results["tension_rupture"] = {"Pn": Pn_rup, "phi_Pn": phi_Pn_rup, "demand": Pu, "ratio": Pu/phi_Pn_rup if phi_Pn_rup else 0, "Ae": Ae}
+    checks["tension_rupture"]["Pn"] = Pn_rup
+    checks["tension_rupture"]["capacity"] = phi_Pn_rup
+    checks["tension_rupture"]["demand"] = Pu
+    checks["tension_rupture"]["ratio"] = Pu/phi_Pn_rup if phi_Pn_rup else 0
+    checks["tension_rupture"]["Ae"] = Ae
+    checks["tension_rupture"]["eqn"] = "Eq.D2-2"
     
     # --- COMPRESSION ---
     # Flexural Buckling X
@@ -235,7 +423,13 @@ def calculate_checks(data):
         Fcrx = 0.877 * Fex
     Pnx = Fcrx * Ag
     phi_Pnx = 0.9 * Pnx
-    results["comp_x"] = {"Pn": Pnx, "phi_Pn": phi_Pnx, "demand": Pu, "ratio": Pu/phi_Pnx if phi_Pnx else 0, "KL_r": KL_rx, "Fe": Fex, "Fcr": Fcrx}
+    checks["compression_x"]["Pnx"] = Pnx
+    checks["compression_x"]["capacity"] = phi_Pnx
+    checks["compression_x"]["demand"] = Pu
+    checks["compression_x"]["ratio"] = Pu/phi_Pnx if phi_Pnx else 0
+    checks["compression_x"]["Lcx_rx"] = KL_rx
+    checks["compression_x"]["Fex"] = Fex
+    checks["compression_x"]["Fcrx"] = Fcrx
     
     # Flexural Buckling Y
     KL_ry = (Ky * L) / ry if ry > 0 else 0
@@ -246,11 +440,17 @@ def calculate_checks(data):
         Fcry = 0.877 * Fey
     Pny = Fcry * Ag
     phi_Pny = 0.9 * Pny
-    results["comp_y"] = {"Pn": Pny, "phi_Pn": phi_Pny, "demand": Pu, "ratio": Pu/phi_Pny if phi_Pny else 0, "KL_r": KL_ry, "Fe": Fey, "Fcr": Fcry}
+    checks["compression_y"]["Pny"] = Pny
+    checks["compression_y"]["capacity"] = phi_Pny
+    checks["compression_y"]["demand"] = Pu
+    checks["compression_y"]["ratio"] = Pu/phi_Pny if phi_Pny else 0
+    checks["compression_y"]["Lcy_ry"] = KL_ry
+    checks["compression_y"]["Fey"] = Fey
+    checks["compression_y"]["Fcry"] = Fcry
     
     # FTB
     # Assuming doubly symmetric, xo=yo=0
-    ro2 = (Ixx + Iyy)/Ag # xo=yo=0
+    ro2 = (Ixx + Iyy)/Ag if Ag > 0 else 0
     H = 1.0
     Kz = 1.0 # Assume 1.0
     Lcz = Kz * L
@@ -258,14 +458,7 @@ def calculate_checks(data):
     term2 = G * J
     Fez = (term1 + term2) * (1/(Ag * ro2)) if (Ag*ro2) > 0 else 0
     
-    # Fe is min of roots of quadratic, but for doubly symmetric, Fe = Fez (Torsional) or Fex/Fey.
-    # AISC E4: For doubly symmetric, FTB is purely Torsional (Fez) or Flexural.
-    # Usually we check Torsional vs Flexural.
-    # The code usually takes Fe = Fez for Torsional Buckling of doubly symmetric.
     Fe_ftb = Fez
-    # Use lowest Fe for Fcr calculation
-    # Actually, for doubly symmetric, we check Flexural (X, Y) and Torsional (Z).
-    # The "FTB" section in STAAD for W-shapes usually refers to Torsional Buckling (E4).
     if Fe_ftb > 0:
         if (Fy/Fe_ftb) <= 2.25:
             Fcr_ftb = (0.658**(Fy/Fe_ftb)) * Fy
@@ -276,40 +469,46 @@ def calculate_checks(data):
         
     Pn_ftb = Fcr_ftb * Ag
     phi_Pn_ftb = 0.9 * Pn_ftb
-    results["ftb"] = {"Pn": Pn_ftb, "phi_Pn": phi_Pn_ftb, "demand": Pu, "ratio": Pu/phi_Pn_ftb if phi_Pn_ftb else 0, "Fe": Fe_ftb, "Fcr": Fcr_ftb, "Fez": Fez, "H": H, "ro2": ro2}
+    checks["ftb"]["Pn"] = Pn_ftb
+    checks["ftb"]["capacity"] = phi_Pn_ftb
+    checks["ftb"]["demand"] = Pu
+    checks["ftb"]["ratio"] = Pu/phi_Pn_ftb if phi_Pn_ftb else 0
+    checks["ftb"]["Fe"] = Fe_ftb
+    checks["ftb"]["Fcr"] = Fcr_ftb
 
     # --- SHEAR ---
-    # Shear X (Weak Axis Shear?) - Depends on Axx.
-    # AISC G2.1: Vn = 0.6 Fy Aw Cv1.
-    # Assuming rolled I-shape, h/tw check for Cv.
-    # Without h/tw, we assume Cv=1.0 if "NonSlender".
+    # Shear X
     Cv = 1.0
     Vnx = 0.6 * Fy * Axx * Cv
-    phi_Vnx = 0.9 * Vnx # LRFD phi=0.9 for shear
-    results["shear_x"] = {"Vn": Vnx, "phi_Vn": phi_Vnx, "demand": Vux, "ratio": Vux/phi_Vnx if phi_Vnx else 0, "Cv": Cv}
+    phi_Vnx = 0.9 * Vnx 
+    checks["shear_x"]["Vnx"] = Vnx
+    checks["shear_x"]["capacity"] = phi_Vnx
+    checks["shear_x"]["demand"] = Vux
+    checks["shear_x"]["ratio"] = Vux/phi_Vnx if phi_Vnx else 0
+    checks["shear_x"]["Cv"] = Cv
     
     Vny = 0.6 * Fy * Ayy * Cv
     phi_Vny = 0.9 * Vny
-    results["shear_y"] = {"Vn": Vny, "phi_Vn": phi_Vny, "demand": Vuy, "ratio": Vuy/phi_Vny if phi_Vny else 0, "Cv": Cv}
+    checks["shear_y"]["Vny"] = Vny
+    checks["shear_y"]["capacity"] = phi_Vny
+    checks["shear_y"]["demand"] = Vuy
+    checks["shear_y"]["ratio"] = Vuy/phi_Vny if phi_Vny else 0
+    checks["shear_y"]["Cv"] = Cv
     
     # --- BENDING ---
     # Flexural Yielding (Y-Axis - Minor)
     Mny_yield = Fy * Zyy
     if Mny_yield > 1.6 * Fy * Syy: Mny_yield = 1.6 * Fy * Syy
     phi_Mny = 0.9 * Mny_yield
-    results["flex_y"] = {"Mn": Mny_yield, "phi_Mn": phi_Mny, "demand": Muy, "ratio": Muy/phi_Mny if phi_Mny else 0}
+    checks["flexure_y"]["Mny"] = Mny_yield
+    checks["flexure_y"]["capacity"] = phi_Mny
+    checks["flexure_y"]["demand"] = Muy
+    checks["flexure_y"]["ratio"] = Muy/phi_Mny if phi_Mny else 0
     
     # LTB (X-Axis - Major)
-    # Lp = 1.76 ry sqrt(E/Fy)
     Lp = 1.76 * ry * (E/Fy)**0.5 if ry > 0 else 0
-    
-    # Lr
-    # rts = sqrt( sqrt(Iy Cw) / Sx )
     rts = ((Iyy * Cw)**0.5 / Sxx)**0.5 if Sxx > 0 else 0
-    
-    # c = 1 for doubly symmetric I
     c = 1.0
-    # ho = distance between flange centroids
     
     if rts > 0 and h0 > 0:
         term_lr1 = 1.95 * rts * E / (0.7 * Fy)
@@ -321,8 +520,7 @@ def calculate_checks(data):
         
     Mn_ltb = 0
     Mp = Fy * Zxx
-    
-    Lb = L # Unbraced length
+    Lb = L 
     
     if Lb <= Lp:
         Mn_ltb = Mp
@@ -335,24 +533,32 @@ def calculate_checks(data):
         if Mn_ltb > Mp: Mn_ltb = Mp
         
     phi_Mnx = 0.9 * Mn_ltb
-    results["ltb_x"] = {"Mn": Mn_ltb, "phi_Mn": phi_Mnx, "demand": Mux, "ratio": Mux/phi_Mnx if phi_Mnx else 0, "Lp": Lp, "Lr": Lr, "Rts": rts, "Cb": Cb}
+    checks["ltb_x"]["Mnx"] = Mn_ltb
+    checks["ltb_x"]["capacity"] = phi_Mnx
+    checks["ltb_x"]["demand"] = Mux
+    checks["ltb_x"]["ratio"] = Mux/phi_Mnx if phi_Mnx else 0
+    checks["ltb_x"]["Lp"] = Lp
+    checks["ltb_x"]["Lr"] = Lr
+    checks["ltb_x"]["Rts"] = rts
+    checks["ltb_x"]["Cb"] = Cb
     
     # FLB (X)
-    # Assume Compact for now or use classification
-    # If Compact, Mn = Mp
-    # User input says "Flange: Compact".
     Mn_flb_x = Mp
     phi_Mn_flb_x = 0.9 * Mn_flb_x
-    results["flb_x"] = {"Mn": Mn_flb_x, "phi_Mn": phi_Mn_flb_x, "demand": Mux, "ratio": Mux/phi_Mn_flb_x if phi_Mn_flb_x else 0}
+    checks["flb_x"]["Mnx"] = Mn_flb_x
+    checks["flb_x"]["capacity"] = phi_Mn_flb_x
+    checks["flb_x"]["demand"] = Mux
+    checks["flb_x"]["ratio"] = Mux/phi_Mn_flb_x if phi_Mn_flb_x else 0
     
     # FLB (Y)
     Mn_flb_y = Mny_yield
     phi_Mn_flb_y = 0.9 * Mn_flb_y
-    results["flb_y"] = {"Mn": Mn_flb_y, "phi_Mn": phi_Mn_flb_y, "demand": Muy, "ratio": Muy/phi_Mn_flb_y if phi_Mn_flb_y else 0}
+    checks["flb_y"]["Mny"] = Mn_flb_y
+    checks["flb_y"]["capacity"] = phi_Mn_flb_y
+    checks["flb_y"]["demand"] = Muy
+    checks["flb_y"]["ratio"] = Muy/phi_Mn_flb_y if phi_Mn_flb_y else 0
     
     # --- INTERACTION ---
-    # H1-1
-    # Pr = Pu, Pc = phi_Pn (min of comp checks)
     Pc = min(phi_Pnx, phi_Pny, phi_Pn_ftb)
     Mcx = min(phi_Mnx, phi_Mn_flb_x)
     Mcy = min(phi_Mny, phi_Mn_flb_y)
@@ -366,132 +572,849 @@ def calculate_checks(data):
         ratio = Pr_Pc/2 + (Mux/Mcx + Muy/Mcy)
         eqn = "Eq.H1-1b"
         
-    results["interaction"] = {"ratio": ratio, "eqn": eqn, "Pc": Pc, "Mcx": Mcx, "Mcy": Mcy}
+    checks["interaction"]["ratio"] = ratio
+    checks["interaction"]["criteria"] = eqn
+    checks["interaction"]["Pc"] = Pc
+    checks["interaction"]["Mcx"] = Mcx
+    checks["interaction"]["Mcy"] = Mcy
     
-    return results
+    # Update main status
+    data["ratio"] = ratio
+    data["status"] = "PASS" if ratio < 1.0 else "FAIL"
+    data["ref"] = eqn
 
 # ==========================================
-# 5. UI & MAIN
+# 2. DEFAULT DATA (Fallback)
 # ==========================================
-st.title("STAAD Design Check (Auto-Calc)")
+default_member_data = {
+    "id": "1",
+    "profile": "ST W8X31",
+    "status": "PASS",
+    "ratio": 0.218,
+    "loadcase": "1006",
+    "ref": "Eq.H1-1b",
+    "location": 0.00,
+    "forces": {
+        "Pz": {"value": 6.830, "unit": "kips", "desc": "Axial Compression"},
+        "Vy": {"value": -1.970, "unit": "kips", "desc": "Shear Y"},
+        "Vx": {"value": -0.2474, "unit": "kips", "desc": "Shear X"},
+        "Tz": {"value": -2.469, "unit": "kip-in", "desc": "Torsion"},
+        "My": {"value": 9.130, "unit": "kip-in", "desc": "Moment Y"},
+        "Mx": {"value": -243.2, "unit": "kip-in", "desc": "Moment X"}
+    },
+    "slenderness": {
+        "actual": 87.309,
+        "allowable": 200.000
+    },
+    "properties": {
+        "Ag": {"value": 9.130, "unit": "in²"},
+        "Axx": {"value": 6.960, "unit": "in²"},
+        "Ayy": {"value": 2.280, "unit": "in²"},
+        "Ixx": {"value": 110.0, "unit": "in⁴"},
+        "Iyy": {"value": 37.10, "unit": "in⁴"},
+        "J": {"value": 0.536, "unit": "in⁴"},
+        "Sxx": {"value": 27.50, "unit": "in³"},
+        "Zxx": {"value": 30.40, "unit": "in³"},
+        "Syy": {"value": 9.275, "unit": "in³"},
+        "Zyy": {"value": 14.10, "unit": "in³"},
+        "Cw": {"value": 531.1, "unit": "in⁶"},
+    },
+    "material": {
+        "Fyld": 50.000,
+        "Fu": 62.000
+    },
+    "params": {
+        "Length": 121.000,
+        "Kx": 2.00,
+        "Ky": 2.00,
+        "NSF": 1.00,
+        "SLF": 1.00,
+        "CSP": 12.00,
+        "Cb": 1.00
+    },
+    "classification": {
+        "compression": {
+            "flange": {"status": "NonSlender", "lambda": 9.20, "lambda_p": "N/A", "lambda_r": 13.49, "case": "Table.4.1a.Case1"},
+            "web": {"status": "NonSlender", "lambda": 22.25, "lambda_p": "N/A", "lambda_r": 35.88, "case": "Table.4.1a.Case5"}
+        },
+        "flexure": {
+            "flange": {"status": "NonCompact", "lambda": 9.20, "lambda_p": 9.15, "lambda_r": 24.08, "case": "Table.4.1b.Case10"},
+            "web": {"status": "Compact", "lambda": 22.25, "lambda_p": 90.55, "lambda_r": 137.27, "case": "Table.4.1b.Case15"}
+        }
+    },
+    "checks": {
+        "tension_yielding": {
+            "demand": 0.000, "capacity": 410.9, "ratio": 0.000, "ref": "Cl.D2", "Pn": 456.50, "eqn": "Eq.D2-1"
+        },
+        "tension_rupture": {
+            "demand": 0.000, "capacity": 424.5, "ratio": 0.000, "ref": "Cl.D2", "Ae": 9.1300, "Pn": 566.06, "eqn": "Eq.D2-2"
+        },
+        "compression_x": {
+            "demand": 8.409, "capacity": 319.2, "ratio": 0.026, "ref": "Cl.E3", 
+            "Lcx_rx": 58.772, "Fex": 82.863, "Fcrx": 38.841, "Pnx": 354.61
+        },
+        "compression_y": {
+            "demand": 8.409, "capacity": 235.3, "ratio": 0.036, "ref": "Cl.E3", 
+            "Lcy_ry": 87.309, "Fey": 37.547, "Fcry": 28.636, "Pny": 261.44
+        },
+        "ftb": {
+             "demand": 8.409, "capacity": 340.4, "ratio": 0.025, "ref": "Cl.E4",
+             "Fe": 111.22, "Fcr": 41.424, "Pn": 378.20
+        },
+        "shear_x": {
+            "demand": 1.360, "capacity": 187.9, "ratio": 0.007, "ref": "Cl.G1",
+            "Cv": 1.0000, "Vnx": 208.80
+        },
+        "shear_y": {
+            "demand": 1.970, "capacity": 68.40, "ratio": 0.029, "ref": "Cl.G1",
+            "Cv": 1.0000, "Vny": 68.400
+        },
+        "ltb_x": { 
+            "demand": -243.2, "capacity": 1284.0, "ratio": 0.189, "ref": "Cl.F2.2",
+            "Mnx": 1426.5, "Cb": 1.000, "Lp": 85.443, "Lr": 297.38, "Rts": 2.2593
+        },
+        "flb_x": {
+            "demand": -243.2, "capacity": 1367.0, "ratio": 0.178, "ref": "Cl.F3.1",
+            "Mnx": 1518.4
+        },
+        "flb_y": {
+            "demand": -83.49, "capacity": 633.5, "ratio": 0.132, "ref": "Cl.F6.2",
+            "Mny": 703.88
+        },
+        "flexure_y": {
+            "demand": -83.49, "capacity": 634.5, "ratio": 0.132, "ref": "Cl.F6.1",
+            "Mny": 705.00
+        },
+        "interaction": {
+            "ratio": 0.218, "criteria": "Eq.H1-1b",
+            "Pc": 235.30, "Mcx": 1283.8, "Mcy": 633.50
+        }
+    }
+}
 
-default_input = """...""" # (User's input here)
+# Apply auto-calculation to default data to ensure consistency
+calculate_results(default_member_data)
 
-input_text = st.text_area("Paste STAAD Output (Inputs Only)", height=300)
+# ==========================================
+# 3. HELPER FUNCTIONS
+# ==========================================
+def format_val(val, decimals=2):
+    """
+    Formats a number:
+    - If < 1, use 3 decimal places (or user specified).
+    - Otherwise, use 2 decimal places.
+    - Handles strings gracefully.
+    """
+    try:
+        f_val = float(val)
+        if abs(f_val) < 1 and f_val != 0:
+            return f"{f_val:.3f}"
+        return f"{f_val:.{decimals}f}"
+    except (ValueError, TypeError):
+        return str(val)
 
-if input_text:
-    data = parse_staad_inputs(input_text)
+def render_latex(lhs, rhs, subs=None, ref=None):
+    """
+    Renders a LaTeX equation with an optional substitution step.
+    Uses \\times for multiplication.
+    """
+    if ref:
+        st.markdown(f"**Reference:** {ref}")
+
+    st.latex(f"{lhs} = {rhs}")
     
-    if data["id"] != "Unknown":
-        # Calculate
-        res = calculate_checks(data)
-        
-        # Display Header
-        c1, c2, c3, c4 = st.columns(4)
-        c1.metric("Member", data["id"])
-        c2.metric("Profile", data["profile"])
-        c3.metric("Load Case", data["loadcase"])
-        c4.metric("Interaction Ratio", f"{res['interaction']['ratio']:.3f}", delta_color="inverse" if res['interaction']['ratio'] >= 1 else "normal")
-        
-        st.markdown("---")
-        
-        # Display Inputs
-        st.subheader("1. Inputs")
-        c_in1, c_in2 = st.columns(2)
-        with c_in1:
-            st.markdown("**Forces**")
-            st.write(f"Pz (Axial): {data['forces'].get('Pz')} kips")
-            st.write(f"Vx, Vy (Shear): {data['forces'].get('Vx')}, {data['forces'].get('Vy')} kips")
-            st.write(f"Mx, My (Moment): {data['forces'].get('Mx')}, {data['forces'].get('My')} kip-in")
-        with c_in2:
-            st.markdown("**Properties**")
-            st.write(f"Ag: {data['properties'].get('Ag')} in²")
-            st.write(f"Ixx: {data['properties'].get('Ixx')} in⁴, Iyy: {data['properties'].get('Iyy')} in⁴")
-            st.write(f"Cw: {data['properties'].get('Cw')} in⁶, J: {data['properties'].get('J')} in⁴")
+    if subs:
+        sub_rhs = rhs
+        for key, value in subs.items():
+            sub_rhs = sub_rhs.replace(key, f"{value}")
             
-        st.markdown("---")
-        st.subheader("2. Detailed Checks")
-        
-        # Tension
-        st.markdown("### 2.1 Tension")
-        t_y = res["tension_yielding"]
-        st.markdown("**Tensile Yielding**")
-        render_latex("P_n", "F_y A_g", {"F_y": data["material"]["Fyld"], "A_g": data["properties"]["Ag"]})
-        st.latex(f"P_n = {format_val(t_y['Pn'])} \\text{{ kips}}")
-        st.latex(f"\phi P_n = {format_val(t_y['phi_Pn'])} \\text{{ kips}}")
-        result_card("Ratio", t_y["ratio"], "", "PASS" if t_y["ratio"] < 1 else "FAIL")
-        
-        t_r = res["tension_rupture"]
-        st.markdown("**Tensile Rupture**")
-        render_latex("P_n", "F_u A_e", {"F_u": data["material"]["Fu"], "A_e": f"{t_r['Ae']:.2f}"})
-        st.latex(f"P_n = {format_val(t_r['Pn'])} \\text{{ kips}}")
-        st.latex(f"\phi P_n = {format_val(t_r['phi_Pn'])} \\text{{ kips}}")
-        result_card("Ratio", t_r["ratio"], "", "PASS" if t_r["ratio"] < 1 else "FAIL")
-        
-        # Compression
-        st.markdown("### 2.2 Compression")
-        c_c1, c_c2 = st.columns(2)
-        with c_c1:
-            cx = res["comp_x"]
-            st.markdown("**Flexural Buckling (X)**")
-            st.write(f"KL/r: {cx['KL_r']:.2f}")
-            st.latex(f"F_{{ex}} = {format_val(cx['Fe'])} \\text{{ ksi}}")
-            st.latex(f"F_{{cr}} = {format_val(cx['Fcr'])} \\text{{ ksi}}")
-            st.latex(f"\phi P_n = {format_val(cx['phi_Pn'])} \\text{{ kips}}")
-            result_card("Ratio", cx["ratio"], "", "PASS" if cx["ratio"] < 1 else "FAIL")
-            
-        with c_c2:
-            cy = res["comp_y"]
-            st.markdown("**Flexural Buckling (Y)**")
-            st.write(f"KL/r: {cy['KL_r']:.2f}")
-            st.latex(f"F_{{ey}} = {format_val(cy['Fe'])} \\text{{ ksi}}")
-            st.latex(f"F_{{cr}} = {format_val(cy['Fcr'])} \\text{{ ksi}}")
-            st.latex(f"\phi P_n = {format_val(cy['phi_Pn'])} \\text{{ kips}}")
-            result_card("Ratio", cy["ratio"], "", "PASS" if cy["ratio"] < 1 else "FAIL")
-            
-        # FTB
-        ftb = res["ftb"]
-        st.markdown("**Flexural-Torsional Buckling**")
-        st.latex(f"F_e = {format_val(ftb['Fe'])} \\text{{ ksi}}")
-        st.latex(f"F_{{cr}} = {format_val(ftb['Fcr'])} \\text{{ ksi}}")
-        st.latex(f"\phi P_n = {format_val(ftb['phi_Pn'])} \\text{{ kips}}")
-        result_card("Ratio", ftb["ratio"], "", "PASS" if ftb["ratio"] < 1 else "FAIL")
-        
-        # Shear
-        st.markdown("### 2.3 Shear")
-        c_s1, c_s2 = st.columns(2)
-        with c_s1:
-            sx = res["shear_x"]
-            st.markdown("**Shear X**")
-            st.latex(f"\phi V_n = {format_val(sx['phi_Vn'])} \\text{{ kips}}")
-            result_card("Ratio", sx["ratio"], "", "PASS" if sx["ratio"] < 1 else "FAIL")
-        with c_s2:
-            sy = res["shear_y"]
-            st.markdown("**Shear Y**")
-            st.latex(f"\phi V_n = {format_val(sy['phi_Vn'])} \\text{{ kips}}")
-            result_card("Ratio", sy["ratio"], "", "PASS" if sy["ratio"] < 1 else "FAIL")
-            
-        # Bending
-        st.markdown("### 2.4 Bending")
-        c_b1, c_b2 = st.columns(2)
-        with c_b1:
-            ltb = res["ltb_x"]
-            st.markdown("**LTB (X-Axis)**")
-            st.write(f"Lp: {ltb['Lp']:.2f}, Lr: {ltb['Lr']:.2f}, Lb: {data['params']['Length']}")
-            st.latex(f"\phi M_n = {format_val(ltb['phi_Mn'])} \\text{{ kip-in}}")
-            result_card("Ratio", ltb["ratio"], "", "PASS" if ltb["ratio"] < 1 else "FAIL")
-        with c_b2:
-            fy = res["flex_y"]
-            st.markdown("**Flexure (Y-Axis)**")
-            st.latex(f"\phi M_n = {format_val(fy['phi_Mn'])} \\text{{ kip-in}}")
-            result_card("Ratio", fy["ratio"], "", "PASS" if fy["ratio"] < 1 else "FAIL")
-            
-        # Interaction
-        st.markdown("### 2.5 Interaction")
-        inter = res["interaction"]
-        st.write(f"Criteria: {inter['eqn']}")
-        st.latex(f"P_c = {format_val(inter['Pc'])}, M_{{cx}} = {format_val(inter['Mcx'])}, M_{{cy}} = {format_val(inter['Mcy'])}")
-        result_card("Interaction Ratio", inter["ratio"], "", "PASS" if inter["ratio"] < 1 else "FAIL")
-        
+        st.latex(f"{lhs} = {sub_rhs}")
+
+def section_header(title):
+    st.markdown(f"### {title}")
+    st.markdown("---")
+
+def result_card(label, value, unit, status=None):
+    color = "green" if status == "PASS" else "red" if status == "FAIL" else "black"
+    st.markdown(
+        f"""
+        <div style="padding: 10px; border: 1px solid #ddd; border-radius: 5px; margin-bottom: 10px; background-color: #f9f9f9;">
+            <strong>{label}</strong>: {value} {unit} 
+            {f'<span style="color:{color}; font-weight:bold; float:right">{status}</span>' if status else ''}
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
+
+# ==========================================
+# 4. STREAMLIT APP LAYOUT
+# ==========================================
+st.set_page_config(page_title="STAAD Design Calculation", layout="wide")
+
+# Custom CSS
+st.markdown("""
+<style>
+    .main { background-color: #ffffff; color: #333; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
+    .stApp { background-color: #f0f2f6; }
+    h1, h2, h3 { color: #2c3e50; }
+    .block-container { padding-top: 2rem; padding-bottom: 2rem; }
+</style>
+""", unsafe_allow_html=True)
+
+# --- Sidebar Input ---
+st.sidebar.title("Input")
+st.sidebar.markdown("Paste your STAAD report text below:")
+raw_input = st.sidebar.text_area("STAAD Output", height=300)
+
+if raw_input:
+    try:
+        member_data = parse_staad_report(raw_input)
+        st.sidebar.success("Parsed successfully!")
+    except Exception as e:
+        st.sidebar.error(f"Error parsing input: {e}")
+        member_data = default_member_data
+else:
+    st.sidebar.info("Using default example data.")
+    member_data = default_member_data
+
+# --- Header ---
+st.title("STAAD.Pro Design Calculation Sheet")
+st.subheader("AISC 360-16 LRFD Code Check")
+
+col1, col2, col3, col4 = st.columns(4)
+col1.metric("Member No", member_data["id"])
+col2.metric("Profile", member_data["profile"])
+col3.metric("Load Case", member_data["loadcase"])
+ratio_val = member_data["ratio"]
+delta_col = "normal" if ratio_val < 1.0 else "inverse"
+col4.metric("Status", member_data["status"], delta=str(ratio_val), delta_color=delta_col)
+
+st.markdown("---")
+
+# --- 1. Design Inputs ---
+st.header("1. Design Inputs")
+
+# 1.1 Applied Loads Table
+st.subheader("1.1 Applied Loads")
+loads = member_data["forces"]
+load_table_data = []
+# Ensure we have data before iterating
+if loads:
+    for key, data in loads.items():
+        load_table_data.append({
+            "Load": key,
+            "Value": data.get("value", 0),
+            "Unit": data.get("unit", ""),
+            "Definition": data.get("desc", "")
+        })
+    df_loads = pd.DataFrame(load_table_data)
+    st.table(df_loads)
+else:
+    st.write("No load data found.")
+
+# 1.2 Section Properties & Material
+c1, c2 = st.columns(2)
+
+with c1:
+    st.subheader("1.2 Section Properties")
+    props = member_data["properties"]
+    if props:
+        prop_table_data = [{"Property": k, "Value": v.get("value", 0), "Unit": v.get("unit", "")} for k, v in props.items()]
+        st.table(pd.DataFrame(prop_table_data))
     else:
-        st.info("Paste STAAD output above to see calculations.")
+        st.write("No property data found.")
+
+with c2:
+    st.subheader("1.3 Material & Parameters")
+    mat = member_data["material"]
+    par = member_data["params"]
+    
+    st.markdown("**Material Properties**")
+    st.write(f"- Yield Strength ($F_y$): {mat.get('Fyld', 0)} ksi")
+    st.write(f"- Ultimate Strength ($F_u$): {mat.get('Fu', 0)} ksi")
+    
+    st.markdown("**Design Parameters**")
+    st.write(f"- Actual Member Length: {par.get('Length', 0)} in")
+    st.write(f"- Effective Length Factors: $K_x={par.get('Kx', 0)}, K_y={par.get('Ky', 0)}$")
+    st.write(f"- LTB Modification Factor ($C_b$): {par.get('Cb', 1.0)}")
+    st.write(f"- Other Parameters: NSF={par.get('NSF', 1.0)}, SLF={par.get('SLF', 1.0)}, CSP={par.get('CSP', 0)}")
+
+    st.markdown("""
+    **Definitions:**
+    - **NSF**: Net section factor for tension members.
+    - **SLF**: Shear Lag Factor.
+    - **CSP**: Spacing between connectors in current length units. Refer to Section E6.1 and E6.2 of AISC 360.
+    """)
+
+# --- 1.4 Classification ---
+st.header("1.4 Slenderness Classification")
+cls = member_data.get("classification", default_member_data["classification"])
+
+c_cls1, c_cls2 = st.columns(2)
+
+with c_cls1:
+    st.subheader("Compression (Table B4.1a)")
+    comp_cls = cls["compression"]
+    
+    # Flange
+    f_c = comp_cls["flange"]
+    st.markdown(f"**Flange**: {f_c['status']}")
+    st.write(f"Case: {f_c['case']}")
+    st.latex(f"\lambda = {f_c['lambda']}")
+    st.latex(f"\lambda_r = {f_c['lambda_r']}")
+    if f_c['lambda_r'] != "N/A" and f_c['lambda'] < float(f_c['lambda_r']):
+        st.success(f"$\lambda < \lambda_r$ \u2192 Non-Slender")
+    else:
+        st.warning(f"Check Slenderness")
+
+    st.markdown("---")
+    
+    # Web
+    w_c = comp_cls["web"]
+    st.markdown(f"**Web**: {w_c['status']}")
+    st.write(f"Case: {w_c['case']}")
+    st.latex(f"\lambda = {w_c['lambda']}")
+    st.latex(f"\lambda_r = {w_c['lambda_r']}")
+    if w_c['lambda_r'] != "N/A" and w_c['lambda'] < float(w_c['lambda_r']):
+        st.success(f"$\lambda < \lambda_r$ \u2192 Non-Slender")
+    else:
+        st.warning(f"Check Slenderness")
+
+with c_cls2:
+    st.subheader("Flexure (Table B4.1b)")
+    flex_cls = cls["flexure"]
+    
+    # Flange
+    f_f = flex_cls["flange"]
+    st.markdown(f"**Flange**: {f_f['status']}")
+    st.write(f"Case: {f_f['case']}")
+    st.latex(f"\lambda = {f_f['lambda']}")
+    st.latex(f"\lambda_p = {f_f['lambda_p']}, \lambda_r = {f_f['lambda_r']}")
+    
+    if f_f['lambda_p'] != "N/A" and f_f['lambda_r'] != "N/A":
+        lp = float(f_f['lambda_p'])
+        lr = float(f_f['lambda_r'])
+        lam = f_f['lambda']
+        if lam <= lp:
+            st.success(f"$\lambda \le \lambda_p$ \u2192 Compact")
+        elif lam <= lr:
+            st.warning(f"$\lambda_p < \lambda \le \lambda_r$ \u2192 Non-Compact")
+        else:
+            st.error(f"$\lambda > \lambda_r$ \u2192 Slender")
+
+    st.markdown("---")
+
+    # Web
+    w_f = flex_cls["web"]
+    st.markdown(f"**Web**: {w_f['status']}")
+    st.write(f"Case: {w_f['case']}")
+    st.latex(f"\lambda = {w_f['lambda']}")
+    st.latex(f"\lambda_p = {w_f['lambda_p']}, \lambda_r = {w_f['lambda_r']}")
+    
+    if w_f['lambda_p'] != "N/A" and w_f['lambda_r'] != "N/A":
+        lp = float(w_f['lambda_p'])
+        lr = float(w_f['lambda_r'])
+        lam = w_f['lambda']
+        if lam <= lp:
+            st.success(f"$\lambda \le \lambda_p$ \u2192 Compact")
+        elif lam <= lr:
+            st.warning(f"$\lambda_p < \lambda \le \lambda_r$ \u2192 Non-Compact")
+        else:
+            st.error(f"$\lambda > \lambda_r$ \u2192 Slender")
+
+
+# --- 2. Detailed Calculations ---
+st.header("2. Detailed Calculations")
+
+checks = member_data["checks"]
+
+# 2.1 Tension
+section_header("2.1 Tension Checks")
+t_yield = checks.get("tension_yielding", {})
+t_rupture = checks.get("tension_rupture", {})
+
+st.markdown("#### Tensile Yielding")
+Fy = mat.get("Fyld", 0)
+Ag = props.get("Ag", {}).get("value", 0)
+Pn_val = t_yield.get('Pn', 0)
+if Pn_val == 0: Pn_val = Fy * Ag
+
+render_latex(
+    lhs="P_n", 
+    rhs="F_y \\times A_g", 
+    subs={"F_y": Fy, "A_g": Ag},
+    ref=f"{t_yield.get('ref', '')} ({t_yield.get('eqn', '')})"
+)
+st.latex(f"P_n = {format_val(Pn_val)} \\text{{ kips}}")
+
+phi = 0.9
+phi_pn = phi * Pn_val
+render_latex(
+    lhs="\phi P_n", 
+    rhs=f"{phi} \\times P_n",
+    subs={"P_n": format_val(Pn_val)}
+)
+st.latex(f"\phi P_n = {format_val(phi_pn)} \\text{{ kips}}")
+st.latex(f"P_u = {format_val(t_yield.get('demand', 0))} \\text{{ kips}}")
+result_card("Ratio", t_yield.get("ratio", 0), "", "PASS" if t_yield.get("ratio", 0) < 1.0 else "FAIL")
+
+st.markdown("#### Tensile Rupture")
+Fu = mat.get("Fu", 0)
+Ae = t_rupture.get("Ae", 0)
+Pn_rupture = t_rupture.get('Pn', 0)
+if Pn_rupture == 0: Pn_rupture = Fu * Ae
+
+render_latex(
+    lhs="P_n", 
+    rhs="F_u \\times A_e", 
+    subs={"F_u": Fu, "A_e": Ae},
+    ref=f"{t_rupture.get('ref', '')} ({t_rupture.get('eqn', '')})"
+)
+st.latex(f"P_n = {format_val(Pn_rupture)} \\text{{ kips}}")
+
+phi_rupture = 0.75
+phi_pn_rupture = phi_rupture * Pn_rupture
+render_latex(
+    lhs="\phi P_n", 
+    rhs=f"{phi_rupture} \\times P_n",
+    subs={"P_n": format_val(Pn_rupture)}
+)
+st.latex(f"\phi P_n = {format_val(phi_pn_rupture)} \\text{{ kips}}")
+st.latex(f"P_u = {format_val(t_rupture.get('demand', 0))} \\text{{ kips}}")
+result_card("Ratio", t_rupture.get("ratio", 0), "", "PASS" if t_rupture.get("ratio", 0) < 1.0 else "FAIL")
+
+
+# 2.2 Compression
+section_header("2.2 Compression Checks")
+comp_x = checks.get("compression_x", {})
+comp_y = checks.get("compression_y", {})
+phi_comp = 0.9
+
+c_comp1, c_comp2 = st.columns(2)
+
+with c_comp1:
+    # X-Axis
+    st.markdown("#### Flexural Buckling (X-Axis)")
+    st.write(f"Effective Slenderness ($L_{{cx}}/r_x$): {comp_x.get('Lcx_rx', 0)}")
+
+    # FeX
+    render_latex(
+        lhs="F_{ex}",
+        rhs="\\frac{\pi^2 \\times E}{(L_{cx}/r_x)^2}",
+        subs={"E": "29000", "L_{cx}/r_x": comp_x.get('Lcx_rx', 0)},
+        ref="Eq.E3-4"
+    )
+    st.latex(f"F_{{ex}} = {comp_x.get('Fex', 0)} \\text{{ ksi}}")
+
+    # FcrX
+    render_latex(
+        lhs="F_{crx}",
+        rhs="0.658^{F_y/F_{ex}} \\times F_y",
+        subs={"F_y": mat.get("Fyld", 0), "F_{ex}": comp_x.get("Fex", 0)},
+        ref=f"{comp_x.get('ref', '')} (Eq.E3-2)"
+    )
+    st.latex(f"F_{{crx}} = {format_val(comp_x.get('Fcrx', 0))} \\text{{ ksi}}")
+
+    # PnX
+    render_latex(
+        lhs="P_{nx}",
+        rhs="F_{crx} \\times A_g",
+        subs={"F_{crx}": format_val(comp_x.get("Fcrx", 0)), "A_g": props.get("Ag", {}).get("value", 0)},
+        ref="Eq.E3-1"
+    )
+    st.latex(f"P_{{nx}} = {format_val(comp_x.get('Pnx', 0))} \\text{{ kips}}")
+
+    # Phi PnX
+    phi_pnx = phi_comp * comp_x.get('Pnx', 0)
+    render_latex(
+        lhs="\phi P_{nx}",
+        rhs=f"{phi_comp} \\times P_{{nx}}",
+        subs={"P_{nx}": format_val(comp_x.get('Pnx', 0))}
+    )
+    st.latex(f"\phi P_{{nx}} = {format_val(phi_pnx)} \\text{{ kips}}")
+    st.latex(f"P_u = {format_val(comp_x.get('demand', 0))} \\text{{ kips}}")
+    result_card("Ratio", comp_x.get("ratio", 0), "", "PASS" if comp_x.get("ratio", 0) < 1.0 else "FAIL")
+
+
+with c_comp2:
+    # Y-Axis
+    st.markdown("#### Flexural Buckling (Y-Axis)")
+    st.write(f"Effective Slenderness ($L_{{cy}}/r_y$): {comp_y.get('Lcy_ry', 0)}")
+
+    # FeY
+    render_latex(
+        lhs="F_{ey}",
+        rhs="\\frac{\pi^2 \\times E}{(L_{cy}/r_y)^2}",
+        subs={"E": "29000", "L_{cy}/r_y": comp_y.get('Lcy_ry', 0)},
+        ref="Eq.E3-4"
+    )
+    st.latex(f"F_{{ey}} = {comp_y.get('Fey', 0)} \\text{{ ksi}}")
+
+    # FcrY
+    render_latex(
+        lhs="F_{cry}",
+        rhs="0.658^{F_y/F_{ey}} \\times F_y",
+        subs={"F_y": mat.get("Fyld", 0), "F_{ey}": comp_y.get("Fey", 0)},
+        ref=f"{comp_y.get('ref', '')} (Eq.E3-2)"
+    )
+    st.latex(f"F_{{cry}} = {format_val(comp_y.get('Fcry', 0))} \\text{{ ksi}}")
+
+    # PnY
+    render_latex(
+        lhs="P_{ny}",
+        rhs="F_{cry} \\times A_g",
+        subs={"F_{cry}": format_val(comp_y.get("Fcry", 0)), "A_g": props.get("Ag", {}).get("value", 0)},
+        ref="Eq.E3-1"
+    )
+    st.latex(f"P_{{ny}} = {format_val(comp_y.get('Pny', 0))} \\text{{ kips}}")
+
+    # Phi PnY
+    phi_pny = phi_comp * comp_y.get('Pny', 0)
+    render_latex(
+        lhs="\phi P_{ny}",
+        rhs=f"{phi_comp} \\times P_{{ny}}",
+        subs={"P_{ny}": format_val(comp_y.get('Pny', 0))}
+    )
+    st.latex(f"\phi P_{{ny}} = {format_val(phi_pny)} \\text{{ kips}}")
+    st.latex(f"P_u = {format_val(comp_y.get('demand', 0))} \\text{{ kips}}")
+    result_card("Ratio", comp_y.get("ratio", 0), "", "PASS" if comp_y.get("ratio", 0) < 1.0 else "FAIL")
+
+
+# Flexural-Torsional Buckling
+ftb = checks.get("ftb", {})
+st.markdown("#### Flexural-Torsional Buckling")
+
+# Fe
+# Calculate inputs for Fe (Fez and H) as they are not in report
+E_val = 29000
+G_val = 11200
+Cw_val = props.get("Cw", {}).get("value", 0)
+J_val = props.get("J", {}).get("value", 0)
+Ix_val = props.get("Ixx", {}).get("value", 0)
+Iy_val = props.get("Iyy", {}).get("value", 0)
+Ag_val = props.get("Ag", {}).get("value", 0)
+L_val = par.get("Length", 0)
+Kz = 1.0 # Assumption for torsional buckling effective length factor
+Lcz = Kz * L_val
+
+# Coordinates of shear center with respect to centroid (Assumed 0 for doubly symmetric)
+xo = 0.0
+yo = 0.0
+
+# 1. Polar Radius of Gyration (ro_bar^2) - Eq. E4-9
+st.markdown("**1. Polar Radius of Gyration ($\overline{r}_o^2$)**")
+ro2_val = 0
+if Ag_val > 0:
+    ro2_val = xo**2 + yo**2 + (Ix_val + Iy_val) / Ag_val
+
+render_latex(
+    lhs="\overline{r}_o^2",
+    rhs="x_o^2 + y_o^2 + \\frac{I_x + I_y}{A_g}",
+    subs={
+        "x_o": xo, "y_o": yo,
+        "I_x": Ix_val, "I_y": Iy_val,
+        "A_g": Ag_val
+    },
+    ref="Eq. E4-9"
+)
+st.latex(f"\overline{{r}}_o^2 = {ro2_val:.3f} \\text{{ in}}^2")
+
+
+# 2. Flexural Constant (H) - Eq. E4-8
+st.markdown("**2. Flexural Constant ($H$)**")
+H_val = 1.0
+if ro2_val > 0:
+    H_val = 1 - (xo**2 + yo**2) / ro2_val
+
+render_latex(
+    lhs="H",
+    rhs="1 - \\frac{x_o^2 + y_o^2}{\overline{r}_o^2}",
+    subs={
+        "x_o": xo, "y_o": yo,
+        "\overline{r}_o^2": f"{ro2_val:.3f}"
+    },
+    ref="Eq. E4-8"
+)
+st.latex(f"H = {H_val:.3f}")
+
+
+# 3. Torsional Elastic Buckling Stress (Fez) - Eq. E4-7
+st.markdown("**3. Torsional Elastic Buckling Stress ($F_{ez}$)**")
+
+# Display inputs for verification
+st.write(f"Inputs: $L_{{cz}}={Lcz:.2f}$, $A_g={Ag_val}$, $\overline{{r}}_o^2={ro2_val:.3f}$, $C_w={Cw_val}$, $J={J_val}$")
+
+Fez = 0
+if ro2_val > 0 and Ag_val > 0 and Lcz > 0:
+    term1 = (3.14159**2 * E_val * Cw_val) / (Lcz**2)
+    term2 = G_val * J_val
+    Fez = (term1 + term2) * (1 / (Ag_val * ro2_val))
+else:
+    st.warning("Cannot calculate $F_{ez}$ due to zero or missing inputs ($L_{cz}$, $A_g$, or $\overline{r}_o^2$).")
+
+render_latex(
+    lhs="F_{ez}",
+    rhs="\\left( \\frac{\pi^2 \\times E \\times C_w}{L_{cz}^2} + G \\times J \\right) \\frac{1}{A_g \\times \overline{r}_o^2}",
+    subs={
+        "E": E_val, "C_w": Cw_val, "L_{cz}": f"{Lcz:.2f}",
+        "G": G_val, "J": J_val,
+        "A_g": Ag_val, "\overline{r}_o^2": f"{ro2_val:.3f}"
+    },
+    ref="Eq. E4-7"
+)
+st.latex(f"F_{{ez}} = {Fez:.3f} \\text{{ ksi}}")
+
+# Helper to calculate Fe
+def calculate_fe(Fe_flex, Fe_z, H):
+    if H == 0: return 0
+    term1 = (Fe_flex + Fe_z) / (2 * H)
+    term2 = 1 - (4 * Fe_flex * Fe_z * H) / (Fe_flex + Fe_z)**2
+    if term2 < 0: return 0 # Should not happen for valid inputs
+    return term1 * (1 - term2**0.5)
+
+
+
+# Fcr
+render_latex(
+    lhs="F_{cr}",
+    rhs="0.658^{F_y/F_e} \\times F_y",
+    subs={"F_y": mat.get("Fyld", 0), "F_e": ftb.get("Fe", 0)},
+    ref="Eq.E3-2"
+)
+st.latex(f"F_{{cr}} = {format_val(ftb.get('Fcr', 0))} \\text{{ ksi}}")
+
+# Pn
+render_latex(
+    lhs="P_n",
+    rhs="F_{cr} \\times A_g",
+    subs={"F_{cr}": format_val(ftb.get("Fcr", 0)), "A_g": props.get("Ag", {}).get("value", 0)},
+    ref="Eq.E4-1"
+)
+st.latex(f"P_n = {format_val(ftb.get('Pn', 0))} \\text{{ kips}}")
+
+# Phi Pn
+phi_ftb = 0.9
+phi_pn_ftb = phi_ftb * ftb.get('Pn', 0)
+render_latex(
+    lhs="\phi P_n",
+    rhs=f"{phi_ftb} \\times P_n",
+    subs={"P_n": format_val(ftb.get('Pn', 0))}
+)
+st.latex(f"\phi P_n = {format_val(phi_pn_ftb)} \\text{{ kips}}")
+st.latex(f"P_u = {format_val(ftb.get('demand', 0))} \\text{{ kips}}")
+result_card("Ratio", ftb.get("ratio", 0), "", "PASS" if ftb.get("ratio", 0) < 1.0 else "FAIL")
+
+
+# 2.3 Shear
+section_header("2.3 Shear Checks")
+shear_x = checks.get("shear_x", {})
+shear_y = checks.get("shear_y", {})
+
+c_s1, c_s2 = st.columns(2)
+with c_s1:
+    st.markdown("#### Shear Along X")
+    render_latex(
+        lhs="V_{nx}",
+        rhs="0.6 \\times F_y \\times A_w \\times C_v",
+        subs={"F_y": mat.get("Fyld", 0), "A_w": "Aw", "C_v": shear_x.get("Cv", 0)},
+        ref=f"{shear_x.get('ref', '')} (Eq.G2-1)"
+    )
+    st.latex(f"V_{{nx}} = {format_val(shear_x.get('Vnx', 0))} \\text{{ kips}}")
+    st.latex(f"V_{{ux}} = {format_val(shear_x.get('demand', 0))} \\text{{ kips}}")
+    result_card("Ratio", shear_x.get("ratio", 0), "", "PASS" if shear_x.get("ratio", 0) < 1.0 else "FAIL")
+
+with c_s2:
+    st.markdown("#### Shear Along Y")
+    render_latex(
+        lhs="V_{ny}",
+        rhs="0.6 \\times F_y \\times A_w \\times C_v",
+        subs={"F_y": mat.get("Fyld", 0), "A_w": "Aw", "C_v": shear_y.get("Cv", 0)},
+        ref=f"{shear_y.get('ref', '')} (Eq.G2-1)"
+    )
+    st.latex(f"V_{{ny}} = {format_val(shear_y.get('Vny', 0))} \\text{{ kips}}")
+    st.latex(f"V_{{uy}} = {format_val(shear_y.get('demand', 0))} \\text{{ kips}}")
+    result_card("Ratio", shear_y.get("ratio", 0), "", "PASS" if shear_y.get("ratio", 0) < 1.0 else "FAIL")
+
+
+# 2.4 Bending
+section_header("2.4 Bending Checks")
+ltb_x = checks.get("ltb_x", {})
+flex_y = checks.get("flexure_y", {})
+phi_bend = 0.9
+
+# Y-Axis: Flexural Yielding (First as requested)
+st.markdown("#### Flexural Yielding (Y-Axis)")
+render_latex(
+    lhs="M_{ny}",
+    rhs="M_p = F_y \\times Z_y",
+    subs={"F_y": mat.get("Fyld", 0), "Z_y": props.get("Zyy", {}).get("value", 0)},
+    ref=f"{flex_y.get('ref', '')} (Eq.F6-1)"
+)
+st.latex(f"M_{{ny}} = {format_val(flex_y.get('Mny', 0))} \\text{{ kip-in}}")
+
+phi_mny = phi_bend * flex_y.get('Mny', 0)
+render_latex(
+    lhs="\phi M_{ny}",
+    rhs=f"{phi_bend} \\times M_{{ny}}",
+    subs={"M_{ny}": format_val(flex_y.get('Mny', 0))}
+)
+st.latex(f"\phi M_{{ny}} = {format_val(phi_mny)} \\text{{ kip-in}}")
+st.latex(f"M_{{uy}} = {format_val(flex_y.get('demand', 0))} \\text{{ kip-in}}")
+result_card("Ratio", flex_y.get("ratio", 0), "", "PASS" if flex_y.get("ratio", 0) < 1.0 else "FAIL")
+
+
+# X-Axis: Lateral Torsional Buckling
+st.markdown("#### Lateral Torsional Buckling (X-Axis)")
+st.write(f"Unbraced Length ($L_b$): {par.get('Length', 0)} in")
+
+# Lp
+render_latex(
+    lhs="L_p",
+    rhs="1.76 r_y \\sqrt{\\frac{E}{F_y}}",
+    subs={"r_y": "ry", "E": "29000", "F_y": mat.get("Fyld", 0)}, # ry not explicitly parsed, simplifying
+    ref="Eq.F2-5"
+)
+st.write(f"**Limiting Length ($L_p$):** {ltb_x.get('Lp', 0)} in")
+
+# Rts
+render_latex(
+    lhs="R_{ts}",
+    rhs="\\sqrt{\\frac{\\sqrt{I_y \\times C_w}}{S_x}}",
+    subs={"I_y": props.get("Iyy", {}).get("value", 0), "C_w": props.get("Cw", {}).get("value", 0), "S_x": props.get("Sxx", {}).get("value", 0)},
+    ref="Eq.F2-7"
+)
+st.write(f"**Effective Radius of Gyration ($R_{{ts}}$):** {ltb_x.get('Rts', 0)} in")
+
+# Lr
+render_latex(
+    lhs="L_r",
+    rhs="1.95 \\times R_{ts} \\frac{E}{0.7 F_y} \\sqrt{\\frac{J c}{S_x h_0} + \\sqrt{(\\frac{J c}{S_x h_0})^2 + 6.76 (\\frac{0.7 F_y}{E})^2}}",
+    subs={"R_{ts}": ltb_x.get("Rts", 0), "E": "29000", "F_y": mat.get("Fyld", 0)},
+    ref="Eq.F2-6"
+)
+st.write(f"**Limiting Length ($L_r$):** {ltb_x.get('Lr', 0)} in")
+
+# Cb
+st.write(f"**Moment Gradient Factor ($C_b$):** {ltb_x.get('Cb', 1.0)}")
+
+# Mnx
+render_latex(
+    lhs="M_{nx}",
+    rhs="C_b \\times [M_p - (M_p - 0.7 \\times F_y \\times S_x) \\times \\frac{L_b - L_p}{L_r - L_p}]",
+    subs={
+        "C_b": ltb_x.get("Cb", 1.0), 
+        "M_p": "Mp", 
+        "F_y": mat.get("Fyld", 0),
+        "L_b": par.get('Length', 0),
+        "L_p": ltb_x.get('Lp', 0),
+        "L_r": ltb_x.get('Lr', 0)
+    },
+    ref=f"{ltb_x.get('ref', '')} (Eq.F2-2)"
+)
+st.latex(f"M_{{nx}} = {format_val(ltb_x.get('Mnx', 0))} \\text{{ kip-in}}")
+
+phi_mnx = phi_bend * ltb_x.get('Mnx', 0)
+render_latex(
+    lhs="\phi M_{nx}",
+    rhs=f"{phi_bend} \\times M_{{nx}}",
+    subs={"M_{nx}": format_val(ltb_x.get('Mnx', 0))}
+)
+st.latex(f"\phi M_{{nx}} = {format_val(phi_mnx)} \\text{{ kip-in}}")
+st.latex(f"M_{{ux}} = {format_val(ltb_x.get('demand', 0))} \\text{{ kip-in}}")
+result_card("Ratio", ltb_x.get("ratio", 0), "", "PASS" if ltb_x.get("ratio", 0) < 1.0 else "FAIL")
+
+
+c_flb1, c_flb2 = st.columns(2)
+
+with c_flb1:
+    # Flange Local Buckling (X)
+    flb_x = checks.get("flb_x", {})
+    st.markdown("#### Flange Local Buckling (X-Axis)")
+    render_latex(
+        lhs="M_{nx}",
+        rhs="M_p - (M_p - 0.7 F_y S_x) \\frac{\lambda - \lambda_{pf}}{\lambda_{rf} - \lambda_{pf}}",
+        subs={}, 
+        ref=f"{flb_x.get('ref', '')} (Eq.F3-1)"
+    )
+    st.latex(f"M_{{nx}} = {format_val(flb_x.get('Mnx', 0))} \\text{{ kip-in}}")
+
+    phi_mnx_flb = phi_bend * flb_x.get('Mnx', 0)
+    render_latex(
+        lhs="\phi M_{nx}",
+        rhs=f"{phi_bend} \\times M_{{nx}}",
+        subs={"M_{nx}": format_val(flb_x.get('Mnx', 0))}
+    )
+    st.latex(f"\phi M_{{nx}} = {format_val(phi_mnx_flb)} \\text{{ kip-in}}")
+    st.latex(f"M_{{ux}} = {format_val(flb_x.get('demand', 0))} \\text{{ kip-in}}")
+    result_card("Ratio", flb_x.get("ratio", 0), "", "PASS" if flb_x.get("ratio", 0) < 1.0 else "FAIL")
+
+
+with c_flb2:
+    # Flange Local Buckling (Y)
+    flb_y = checks.get("flb_y", {})
+    st.markdown("#### Flange Local Buckling (Y-Axis)")
+    render_latex(
+        lhs="M_{ny}",
+        rhs="M_p - (M_p - 0.7 F_y S_y) \\frac{\lambda - \lambda_{pf}}{\lambda_{rf} - \lambda_{pf}}",
+        subs={},
+        ref=f"{flb_y.get('ref', '')} (Eq.F6-2)"
+    )
+    st.latex(f"M_{{ny}} = {format_val(flb_y.get('Mny', 0))} \\text{{ kip-in}}")
+
+    phi_mny_flb = phi_bend * flb_y.get('Mny', 0)
+    render_latex(
+        lhs="\phi M_{ny}",
+        rhs=f"{phi_bend} \\times M_{{ny}}",
+        subs={"M_{ny}": format_val(flb_y.get('Mny', 0))}
+    )
+    st.latex(f"\phi M_{{ny}} = {format_val(phi_mny_flb)} \\text{{ kip-in}}")
+    st.latex(f"M_{{uy}} = {format_val(flb_y.get('demand', 0))} \\text{{ kip-in}}")
+    result_card("Ratio", flb_y.get("ratio", 0), "", "PASS" if flb_y.get("ratio", 0) < 1.0 else "FAIL")
+
+
+# 2.5 Interaction
+section_header("2.5 Interaction Checks")
+inter = checks.get("interaction", {})
+
+st.markdown("#### Combined Axial and Flexure")
+
+# Extract values
+Pr = loads.get("Pz", {}).get("value", 0)
+Pc = inter.get("Pc", 0)
+Mrx = abs(loads.get("Mx", {}).get("value", 0))
+Mcx = inter.get("Mcx", 0)
+Mry = loads.get("My", {}).get("value", 0)
+Mcy = inter.get("Mcy", 0)
+
+# Check Pr/Pc ratio
+pr_pc_ratio = 0
+if Pc != 0:
+    pr_pc_ratio = Pr / Pc
+
+st.latex(f"P_r / P_c = {Pr} / {Pc} = {pr_pc_ratio:.3f}")
+
+if pr_pc_ratio < 0.2:
+    st.success("Since $P_r / P_c < 0.2$, Equation H1-1b applies.")
+    eqn_lhs = "\\frac{P_r}{2 \\times P_c} + \\left( \\frac{M_{rx}}{M_{cx}} + \\frac{M_{ry}}{M_{cy}} \\right)"
+    ref_eqn = "Eq.H1-1b"
+else:
+    st.warning("Since $P_r / P_c \ge 0.2$, Equation H1-1a applies.")
+    eqn_lhs = "\\frac{P_r}{P_c} + \\frac{8}{9} \\left( \\frac{M_{rx}}{M_{cx}} + \\frac{M_{ry}}{M_{cy}} \\right)"
+    ref_eqn = "Eq.H1-1a"
+
+render_latex(
+    lhs="Ratio",
+    rhs=eqn_lhs,
+    subs={
+        "P_r": Pr, "P_c": Pc,
+        "M_{rx}": Mrx, "M_{cx}": Mcx,
+        "M_{ry}": Mry, "M_{cy}": Mcy
+    },
+    ref=f"{inter.get('criteria', ref_eqn)}"
+)
+
+st.metric("Final Interaction Ratio", inter.get("ratio", 0))
+if inter.get("ratio", 0) <= 1.0:
+    st.success(f"Member PASSES with Ratio {inter.get('ratio', 0)}")
+else:
+    st.error(f"Member FAILS with Ratio {inter.get('ratio', 0)}")
