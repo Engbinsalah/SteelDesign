@@ -112,10 +112,10 @@ def parse_staad_inputs(text):
             data["properties"]["Iyy"] = parse_value(line, "Iyy")
             data["properties"]["J"] = parse_value(line, "J")
         if "Sxx" in line and (":" in line or "=" in line):
-            data["properties"]["Sxx"] = parse_value(line, r"Sxx\+") # Assuming symmetric for now or taking +
+            data["properties"]["Sxx"] = parse_value(line, "Sxx+") 
             data["properties"]["Zxx"] = parse_value(line, "Zxx")
         if "Syy" in line and (":" in line or "=" in line):
-            data["properties"]["Syy"] = parse_value(line, r"Syy\+")
+            data["properties"]["Syy"] = parse_value(line, "Syy+")
             data["properties"]["Zyy"] = parse_value(line, "Zyy")
         if "Cw" in line and (":" in line or "=" in line):
             data["properties"]["Cw"] = parse_value(line, "Cw")
