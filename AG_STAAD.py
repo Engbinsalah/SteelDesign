@@ -1145,7 +1145,7 @@ st.latex(f"P_r / P_c = {Pr} / {Pc} = {pr_pc_ratio:.3f}")
 
 if pr_pc_ratio < 0.2:
     st.success("Since $P_r / P_c < 0.2$, Equation H1-1b applies.")
-    eqn_lhs = "\\frac{P_r}{2P_c} + \\left( \\frac{M_{rx}}{M_{cx}} + \\frac{M_{ry}}{M_{cy}} \\right)"
+    eqn_lhs = "\\frac{P_r}{2 \\times P_c} + \\left( \\frac{M_{rx}}{M_{cx}} + \\frac{M_{ry}}{M_{cy}} \\right)"
     ref_eqn = "Eq.H1-1b"
 else:
     st.warning("Since $P_r / P_c \ge 0.2$, Equation H1-1a applies.")
