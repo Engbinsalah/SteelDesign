@@ -76,8 +76,8 @@ def parse_staad_report(text):
         # Properties
         if "Ag  :" in line:
             data["properties"]["Ag"] = {"value": parse_value(line, "Ag"), "unit": "in²"}
-            data["properties"]["Axx"] = {"value": parse_value(line, "Axx"), "unit": "in²"}
-            data["properties"]["Ayy"] = {"value": parse_value(line, "Ayy"), "unit": "in²"}
+            data["properties"]["Awxx"] = {"value": parse_value(line, "Axx"), "unit": "in²"}
+            data["properties"]["Awyy"] = {"value": parse_value(line, "Ayy"), "unit": "in²"}
         if "Ixx :" in line:
             data["properties"]["Ixx"] = {"value": parse_value(line, "Ixx"), "unit": "in⁴"}
             data["properties"]["Iyy"] = {"value": parse_value(line, "Iyy"), "unit": "in⁴"}
