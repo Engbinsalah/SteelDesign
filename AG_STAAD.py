@@ -748,90 +748,94 @@ comp_x = checks.get("compression_x", {})
 comp_y = checks.get("compression_y", {})
 phi_comp = 0.9
 
-# X-Axis
-st.markdown("#### Flexural Buckling (X-Axis)")
-st.write(f"Effective Slenderness ($L_{{cx}}/r_x$): {comp_x.get('Lcx_rx', 0)}")
+c_comp1, c_comp2 = st.columns(2)
 
-# FeX
-render_latex(
-    lhs="F_{ex}",
-    rhs="\\frac{\pi^2 \\times E}{(L_{cx}/r_x)^2}",
-    subs={"E": "29000", "L_{cx}/r_x": comp_x.get('Lcx_rx', 0)},
-    ref="Eq.E3-4"
-)
-st.latex(f"F_{{ex}} = {comp_x.get('Fex', 0)} \\text{{ ksi}}")
+with c_comp1:
+    # X-Axis
+    st.markdown("#### Flexural Buckling (X-Axis)")
+    st.write(f"Effective Slenderness ($L_{{cx}}/r_x$): {comp_x.get('Lcx_rx', 0)}")
 
-# FcrX
-render_latex(
-    lhs="F_{crx}",
-    rhs="0.658^{F_y/F_{ex}} \\times F_y",
-    subs={"F_y": mat.get("Fyld", 0), "F_{ex}": comp_x.get("Fex", 0)},
-    ref=f"{comp_x.get('ref', '')} (Eq.E3-2)"
-)
-st.latex(f"F_{{crx}} = {format_val(comp_x.get('Fcrx', 0))} \\text{{ ksi}}")
+    # FeX
+    render_latex(
+        lhs="F_{ex}",
+        rhs="\\frac{\pi^2 \\times E}{(L_{cx}/r_x)^2}",
+        subs={"E": "29000", "L_{cx}/r_x": comp_x.get('Lcx_rx', 0)},
+        ref="Eq.E3-4"
+    )
+    st.latex(f"F_{{ex}} = {comp_x.get('Fex', 0)} \\text{{ ksi}}")
 
-# PnX
-render_latex(
-    lhs="P_{nx}",
-    rhs="F_{crx} \\times A_g",
-    subs={"F_{crx}": format_val(comp_x.get("Fcrx", 0)), "A_g": props.get("Ag", {}).get("value", 0)},
-    ref="Eq.E3-1"
-)
-st.latex(f"P_{{nx}} = {format_val(comp_x.get('Pnx', 0))} \\text{{ kips}}")
+    # FcrX
+    render_latex(
+        lhs="F_{crx}",
+        rhs="0.658^{F_y/F_{ex}} \\times F_y",
+        subs={"F_y": mat.get("Fyld", 0), "F_{ex}": comp_x.get("Fex", 0)},
+        ref=f"{comp_x.get('ref', '')} (Eq.E3-2)"
+    )
+    st.latex(f"F_{{crx}} = {format_val(comp_x.get('Fcrx', 0))} \\text{{ ksi}}")
 
-# Phi PnX
-phi_pnx = phi_comp * comp_x.get('Pnx', 0)
-render_latex(
-    lhs="\phi P_{nx}",
-    rhs=f"{phi_comp} \\times P_{{nx}}",
-    subs={"P_{nx}": format_val(comp_x.get('Pnx', 0))}
-)
-st.latex(f"\phi P_{{nx}} = {format_val(phi_pnx)} \\text{{ kips}}")
-st.latex(f"P_u = {format_val(comp_x.get('demand', 0))} \\text{{ kips}}")
-result_card("Ratio", comp_x.get("ratio", 0), "", "PASS" if comp_x.get("ratio", 0) < 1.0 else "FAIL")
+    # PnX
+    render_latex(
+        lhs="P_{nx}",
+        rhs="F_{crx} \\times A_g",
+        subs={"F_{crx}": format_val(comp_x.get("Fcrx", 0)), "A_g": props.get("Ag", {}).get("value", 0)},
+        ref="Eq.E3-1"
+    )
+    st.latex(f"P_{{nx}} = {format_val(comp_x.get('Pnx', 0))} \\text{{ kips}}")
+
+    # Phi PnX
+    phi_pnx = phi_comp * comp_x.get('Pnx', 0)
+    render_latex(
+        lhs="\phi P_{nx}",
+        rhs=f"{phi_comp} \\times P_{{nx}}",
+        subs={"P_{nx}": format_val(comp_x.get('Pnx', 0))}
+    )
+    st.latex(f"\phi P_{{nx}} = {format_val(phi_pnx)} \\text{{ kips}}")
+    st.latex(f"P_u = {format_val(comp_x.get('demand', 0))} \\text{{ kips}}")
+    result_card("Ratio", comp_x.get("ratio", 0), "", "PASS" if comp_x.get("ratio", 0) < 1.0 else "FAIL")
 
 
-# Y-Axis
-st.markdown("#### Flexural Buckling (Y-Axis)")
-st.write(f"Effective Slenderness ($L_{{cy}}/r_y$): {comp_y.get('Lcy_ry', 0)}")
+with c_comp2:
+    # Y-Axis
+    st.markdown("#### Flexural Buckling (Y-Axis)")
+    st.write(f"Effective Slenderness ($L_{{cy}}/r_y$): {comp_y.get('Lcy_ry', 0)}")
 
-# FeY
-render_latex(
-    lhs="F_{ey}",
-    rhs="\\frac{\pi^2 \\times E}{(L_{cy}/r_y)^2}",
-    subs={"E": "29000", "L_{cy}/r_y": comp_y.get('Lcy_ry', 0)},
-    ref="Eq.E3-4"
-)
-st.latex(f"F_{{ey}} = {comp_y.get('Fey', 0)} \\text{{ ksi}}")
+    # FeY
+    render_latex(
+        lhs="F_{ey}",
+        rhs="\\frac{\pi^2 \\times E}{(L_{cy}/r_y)^2}",
+        subs={"E": "29000", "L_{cy}/r_y": comp_y.get('Lcy_ry', 0)},
+        ref="Eq.E3-4"
+    )
+    st.latex(f"F_{{ey}} = {comp_y.get('Fey', 0)} \\text{{ ksi}}")
 
-# FcrY
-render_latex(
-    lhs="F_{cry}",
-    rhs="0.658^{F_y/F_{ey}} \\times F_y",
-    subs={"F_y": mat.get("Fyld", 0), "F_{ey}": comp_y.get("Fey", 0)},
-    ref=f"{comp_y.get('ref', '')} (Eq.E3-2)"
-)
-st.latex(f"F_{{cry}} = {format_val(comp_y.get('Fcry', 0))} \\text{{ ksi}}")
+    # FcrY
+    render_latex(
+        lhs="F_{cry}",
+        rhs="0.658^{F_y/F_{ey}} \\times F_y",
+        subs={"F_y": mat.get("Fyld", 0), "F_{ey}": comp_y.get("Fey", 0)},
+        ref=f"{comp_y.get('ref', '')} (Eq.E3-2)"
+    )
+    st.latex(f"F_{{cry}} = {format_val(comp_y.get('Fcry', 0))} \\text{{ ksi}}")
 
-# PnY
-render_latex(
-    lhs="P_{ny}",
-    rhs="F_{cry} \\times A_g",
-    subs={"F_{cry}": format_val(comp_y.get("Fcry", 0)), "A_g": props.get("Ag", {}).get("value", 0)},
-    ref="Eq.E3-1"
-)
-st.latex(f"P_{{ny}} = {format_val(comp_y.get('Pny', 0))} \\text{{ kips}}")
+    # PnY
+    render_latex(
+        lhs="P_{ny}",
+        rhs="F_{cry} \\times A_g",
+        subs={"F_{cry}": format_val(comp_y.get("Fcry", 0)), "A_g": props.get("Ag", {}).get("value", 0)},
+        ref="Eq.E3-1"
+    )
+    st.latex(f"P_{{ny}} = {format_val(comp_y.get('Pny', 0))} \\text{{ kips}}")
 
-# Phi PnY
-phi_pny = phi_comp * comp_y.get('Pny', 0)
-render_latex(
-    lhs="\phi P_{ny}",
-    rhs=f"{phi_comp} \\times P_{{ny}}",
-    subs={"P_{ny}": format_val(comp_y.get('Pny', 0))}
-)
-st.latex(f"\phi P_{{ny}} = {format_val(phi_pny)} \\text{{ kips}}")
-st.latex(f"P_u = {format_val(comp_y.get('demand', 0))} \\text{{ kips}}")
-result_card("Ratio", comp_y.get("ratio", 0), "", "PASS" if comp_y.get("ratio", 0) < 1.0 else "FAIL")
+    # Phi PnY
+    phi_pny = phi_comp * comp_y.get('Pny', 0)
+    render_latex(
+        lhs="\phi P_{ny}",
+        rhs=f"{phi_comp} \\times P_{{ny}}",
+        subs={"P_{ny}": format_val(comp_y.get('Pny', 0))}
+    )
+    st.latex(f"\phi P_{{ny}} = {format_val(phi_pny)} \\text{{ kips}}")
+    st.latex(f"P_u = {format_val(comp_y.get('demand', 0))} \\text{{ kips}}")
+    result_card("Ratio", comp_y.get("ratio", 0), "", "PASS" if comp_y.get("ratio", 0) < 1.0 else "FAIL")
 
 
 # Flexural-Torsional Buckling
@@ -1145,7 +1149,7 @@ st.latex(f"P_r / P_c = {Pr} / {Pc} = {pr_pc_ratio:.3f}")
 
 if pr_pc_ratio < 0.2:
     st.success("Since $P_r / P_c < 0.2$, Equation H1-1b applies.")
-    eqn_lhs = "\\frac{P_r}{2 \\times P_c} + \\left( \\frac{M_{rx}}{M_{cx}} + \\frac{M_{ry}}{M_{cy}} \\right)"
+    eqn_lhs = "\\frac{P_r}{2P_c} + \\left( \\frac{M_{rx}}{M_{cx}} + \\frac{M_{ry}}{M_{cy}} \\right)"
     ref_eqn = "Eq.H1-1b"
 else:
     st.warning("Since $P_r / P_c \ge 0.2$, Equation H1-1a applies.")
