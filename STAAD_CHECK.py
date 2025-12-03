@@ -39,6 +39,8 @@ def parse_staad_report(text):
         "ltb_x": {"demand": 0, "capacity": 0, "ratio": 0, "ref": "", "Mnx": 0, "Cb": 1.0, "Lp": 0, "Lr": 0, "Rts": 0},
         "flb_x": {"demand": 0, "capacity": 0, "ratio": 0, "ref": "", "Mnx": 0},
         "flb_y": {"demand": 0, "capacity": 0, "ratio": 0, "ref": "", "Mny": 0},
+        "flb_y": {"demand": 0, "capacity": 0, "ratio": 0, "ref": "", "Mny": 0},
+        "flexure_x": {"demand": 0, "capacity": 0, "ratio": 0, "ref": "", "Mnx": 0},
         "flexure_y": {"demand": 0, "capacity": 0, "ratio": 0, "ref": "", "Mny": 0},
         "interaction": {"ratio": 0, "criteria": "", "Pc": 0, "Mcx": 0, "Mcy": 0}
     }
@@ -496,6 +498,14 @@ def calculate_results(data):
     checks["shear_y"]["Cv"] = Cv
     
     # --- BENDING ---
+    # Flexural Yielding (X-Axis - Major)
+    Mnx_yield = Fy * Zxx
+    phi_Mnx_yield = 0.9 * Mnx_yield
+    checks["flexure_x"]["Mnx"] = Mnx_yield
+    checks["flexure_x"]["capacity"] = phi_Mnx_yield
+    checks["flexure_x"]["demand"] = Mux
+    checks["flexure_x"]["ratio"] = Mux/phi_Mnx_yield if phi_Mnx_yield else 0
+
     # Flexural Yielding (Y-Axis - Minor)
     Mny_yield = Fy * Zyy
     if Mny_yield > 1.6 * Fy * Syy: Mny_yield = 1.6 * Fy * Syy
@@ -1239,28 +1249,53 @@ with c_s2:
 # 2.4 Bending
 section_header("2.4 Bending Checks")
 ltb_x = checks.get("ltb_x", {})
+flex_x = checks.get("flexure_x", {})
 flex_y = checks.get("flexure_y", {})
 phi_bend = 0.9
 
-# Y-Axis: Flexural Yielding (First as requested)
-st.markdown("#### Flexural Yielding (Y-Axis)")
-render_latex(
-    lhs="M_{ny}",
-    rhs="M_p = F_y \\times Z_y",
-    subs={"F_y": mat.get("Fyld", 0), "Z_y": props.get("Zyy", {}).get("value", 0)},
-    ref=f"{flex_y.get('ref', '')} (Eq.F6-1)"
-)
-st.latex(f"M_{{ny}} = {format_val(flex_y.get('Mny', 0))} \\text{{ kip-in}}")
+c_flex1, c_flex2 = st.columns(2)
 
-phi_mny = phi_bend * flex_y.get('Mny', 0)
-render_latex(
-    lhs="\phi M_{ny}",
-    rhs=f"{phi_bend} \\times M_{{ny}}",
-    subs={"M_{ny}": format_val(flex_y.get('Mny', 0))}
-)
-st.latex(f"\phi M_{{ny}} = {format_val(phi_mny)} \\text{{ kip-in}}")
-st.latex(f"M_{{uy}} = {format_val(flex_y.get('demand', 0))} \\text{{ kip-in}}")
-result_card("Ratio", flex_y.get("ratio", 0), "", "PASS" if flex_y.get("ratio", 0) < 1.0 else "FAIL")
+with c_flex1:
+    # X-Axis: Flexural Yielding
+    st.markdown("#### Flexural Yielding (X-Axis)")
+    render_latex(
+        lhs="M_{nx}",
+        rhs="M_p = F_y \\times Z_x",
+        subs={"F_y": mat.get("Fyld", 0), "Z_x": props.get("Zxx", {}).get("value", 0)},
+        ref=f"{flex_x.get('ref', '')} (Eq.F2-1)"
+    )
+    st.latex(f"M_{{nx}} = {format_val(flex_x.get('Mnx', 0))} \\text{{ kip-in}}")
+
+    phi_mnx_yield = phi_bend * flex_x.get('Mnx', 0)
+    render_latex(
+        lhs="\phi M_{nx}",
+        rhs=f"{phi_bend} \\times M_{{nx}}",
+        subs={"M_{nx}": format_val(flex_x.get('Mnx', 0))}
+    )
+    st.latex(f"\phi M_{{nx}} = {format_val(phi_mnx_yield)} \\text{{ kip-in}}")
+    st.latex(f"M_{{ux}} = {format_val(flex_x.get('demand', 0))} \\text{{ kip-in}}")
+    result_card("Ratio", flex_x.get("ratio", 0), "", "PASS" if flex_x.get("ratio", 0) < 1.0 else "FAIL")
+
+with c_flex2:
+    # Y-Axis: Flexural Yielding
+    st.markdown("#### Flexural Yielding (Y-Axis)")
+    render_latex(
+        lhs="M_{ny}",
+        rhs="M_p = F_y \\times Z_y",
+        subs={"F_y": mat.get("Fyld", 0), "Z_y": props.get("Zyy", {}).get("value", 0)},
+        ref=f"{flex_y.get('ref', '')} (Eq.F6-1)"
+    )
+    st.latex(f"M_{{ny}} = {format_val(flex_y.get('Mny', 0))} \\text{{ kip-in}}")
+
+    phi_mny = phi_bend * flex_y.get('Mny', 0)
+    render_latex(
+        lhs="\phi M_{ny}",
+        rhs=f"{phi_bend} \\times M_{{ny}}",
+        subs={"M_{ny}": format_val(flex_y.get('Mny', 0))}
+    )
+    st.latex(f"\phi M_{{ny}} = {format_val(phi_mny)} \\text{{ kip-in}}")
+    st.latex(f"M_{{uy}} = {format_val(flex_y.get('demand', 0))} \\text{{ kip-in}}")
+    result_card("Ratio", flex_y.get("ratio", 0), "", "PASS" if flex_y.get("ratio", 0) < 1.0 else "FAIL")
 
 
 # X-Axis: Lateral Torsional Buckling
