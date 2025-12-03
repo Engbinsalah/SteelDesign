@@ -325,7 +325,7 @@ def parse_staad_report(text):
                         "case": m.group(5)
                     }
 
-                    }
+
 
         elif current_section == "params":
             if "Kx" in line: data["params"]["Kx"] = parse_value(line, "Kx")
