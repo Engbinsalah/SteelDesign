@@ -35,7 +35,9 @@ def parse_staad_report(text):
         "ftb": {"demand": 0, "capacity": 0, "ratio": 0, "ref": "", "Fe": 0, "Fcr": 0, "Pn": 0},
         "shear_x": {"demand": 0, "capacity": 0, "ratio": 0, "ref": "", "Cv": 0, "Vnx": 0},
         "shear_y": {"demand": 0, "capacity": 0, "ratio": 0, "ref": "", "Cv": 0, "Vny": 0},
-        "ltb_x": {"demand": 0, "capacity": 0, "ratio": 0, "ref": "", "Mnx": 0, "Cb": 1.0, "Lp": 0, "Lr": 0},
+        "ltb_x": {"demand": 0, "capacity": 0, "ratio": 0, "ref": "", "Mnx": 0, "Cb": 1.0, "Lp": 0, "Lr": 0, "Rts": 0},
+        "flb_x": {"demand": 0, "capacity": 0, "ratio": 0, "ref": "", "Mnx": 0},
+        "flb_y": {"demand": 0, "capacity": 0, "ratio": 0, "ref": "", "Mny": 0},
         "flexure_y": {"demand": 0, "capacity": 0, "ratio": 0, "ref": "", "Mny": 0},
         "interaction": {"ratio": 0, "criteria": "", "Pc": 0, "Mcx": 0, "Mcy": 0}
     }
@@ -112,6 +114,8 @@ def parse_staad_report(text):
         elif "SHEAR ALONG Y" in line: current_section = "shear_y"
         elif "FLEXURAL YIELDING (Y)" in line: current_section = "flex_y"
         elif "LAT TOR BUCK ABOUT X" in line: current_section = "ltb_x"
+        elif "FLANGE LOCAL BUCK(X)" in line: current_section = "flb_x"
+        elif "FLANGE LOCAL BUCK(Y)" in line: current_section = "flb_y"
         elif "COMBINED FORCES CLAUSE H1" in line: current_section = "inter"
 
         # Parsing based on section
@@ -226,6 +230,27 @@ def parse_staad_report(text):
             if "Mom. Distr. factor" in line: checks["ltb_x"]["Cb"] = parse_value(line, "CbX")
             if "Limiting Unbraced Length" in line and "LpX" in line: checks["ltb_x"]["Lp"] = parse_value(line, "LpX")
             if "Limiting Unbraced Length" in line and "LrX" in line: checks["ltb_x"]["Lr"] = parse_value(line, "LrX")
+            if "Effective Rad. of Gyr." in line: checks["ltb_x"]["Rts"] = parse_value(line, "Rts")
+
+        elif current_section == "flb_x":
+            if "Cl.F" in line and "DEMAND" not in line:
+                 vals = re.findall(r"[-+]?\d*\.\d+|\d+", line)
+                 if len(vals) >= 3:
+                     checks["flb_x"]["demand"] = float(vals[0])
+                     checks["flb_x"]["capacity"] = float(vals[1])
+                     checks["flb_x"]["ratio"] = float(vals[2])
+                     checks["flb_x"]["ref"] = "Cl.F3.1"
+            if "Nom F-L-B Cap" in line: checks["flb_x"]["Mnx"] = parse_value(line, "Mnx")
+
+        elif current_section == "flb_y":
+            if "Cl.F" in line and "DEMAND" not in line:
+                 vals = re.findall(r"[-+]?\d*\.\d+|\d+", line)
+                 if len(vals) >= 3:
+                     checks["flb_y"]["demand"] = float(vals[0])
+                     checks["flb_y"]["capacity"] = float(vals[1])
+                     checks["flb_y"]["ratio"] = float(vals[2])
+                     checks["flb_y"]["ref"] = "Cl.F6.2"
+            if "Nom F-L-B Cap" in line: checks["flb_y"]["Mny"] = parse_value(line, "Mny")
 
         elif current_section == "inter":
             if "Eq.H1" in line and "RATIO" not in line:
@@ -318,17 +343,6 @@ default_member_data = {
             "Cv": 1.0000, "Vnx": 208.80
         },
         "shear_y": {
-            "demand": 1.970, "capacity": 68.40, "ratio": 0.029, "ref": "Cl.G1",
-            "Cv": 1.0000, "Vny": 68.400
-        },
-        "ltb_x": { 
-            "demand": -243.2, "capacity": 1284.0, "ratio": 0.189, "ref": "Cl.F2.2",
-            "Mnx": 1426.5, "Cb": 1.000, "Lp": 85.443, "Lr": 297.38
-        },
-        "flexure_y": {
-            "demand": -83.49, "capacity": 634.5, "ratio": 0.132, "ref": "Cl.F6.1",
-            "Mny": 705.00
-        },
         "interaction": {
             "ratio": 0.218, "criteria": "Eq.H1-1b",
             "Pc": 235.30, "Mcx": 1283.8, "Mcy": 633.50
@@ -619,7 +633,7 @@ st.markdown("#### Flexural-Torsional Buckling")
 # Fe
 render_latex(
     lhs="F_e",
-    rhs="\\text{Calculated from Torsional Properties}",
+    rhs="\\left( \\frac{F_{ey} + F_{ez}}{2H} \\right) \\left[ 1 - \\sqrt{1 - \\frac{4 F_{ey} F_{ez} H}{(F_{ey} + F_{ez})^2}} \\right]",
     subs={},
     ref=f"{ftb.get('ref', '')} (Eq.E4-2)"
 )
@@ -688,28 +702,128 @@ with c_s2:
 section_header("2.4 Bending Checks")
 ltb_x = checks.get("ltb_x", {})
 flex_y = checks.get("flexure_y", {})
+phi_bend = 0.9
 
-st.markdown("#### X-Axis: Lateral Torsional Buckling")
-st.write(f"Unbraced Length ($L_b$): {par.get('Length', 0)} in")
-st.write(f"Limiting Lengths: $L_p = {ltb_x.get('Lp', 0)}$ in, $L_r = {ltb_x.get('Lr', 0)}$ in")
-render_latex(
-    lhs="M_{nx}",
-    rhs="C_b \\times [M_p - (M_p - 0.7 \\times F_y \\times S_x) \\times \\frac{L_b - L_p}{L_r - L_p}]",
-    subs={"C_b": ltb_x.get("Cb", 1.0), "M_p": "Mp", "F_y": mat.get("Fyld", 0)},
-    ref=f"{ltb_x.get('ref', '')} (Eq.F2-2)"
-)
-st.write(f"**Capacity ($M_{{nx}}$):** {ltb_x.get('Mnx', 0)} kip-in")
-result_card("Ratio", ltb_x.get("ratio", 0), "", "PASS" if ltb_x.get("ratio", 0) < 1.0 else "FAIL")
-
-st.markdown("#### Y-Axis: Flexural Yielding")
+# Y-Axis: Flexural Yielding (First as requested)
+st.markdown("#### Flexural Yielding (Y-Axis)")
 render_latex(
     lhs="M_{ny}",
     rhs="M_p = F_y \\times Z_y",
     subs={"F_y": mat.get("Fyld", 0), "Z_y": props.get("Zyy", {}).get("value", 0)},
     ref=f"{flex_y.get('ref', '')} (Eq.F6-1)"
 )
-st.write(f"**Capacity ($M_{{ny}}$):** {flex_y.get('Mny', 0)} kip-in")
+st.write(f"**Nominal Flexural Strength ($M_{{ny}}$):** {flex_y.get('Mny', 0)} kip-in")
+
+phi_mny = phi_bend * flex_y.get('Mny', 0)
+render_latex(
+    lhs="\phi M_{ny}",
+    rhs=f"{phi_bend} \\times M_{{ny}}",
+    subs={"M_{ny}": flex_y.get('Mny', 0)}
+)
+st.write(f"**Design Capacity ($\phi M_{{ny}}$):** {phi_mny:.2f} kip-in")
 result_card("Ratio", flex_y.get("ratio", 0), "", "PASS" if flex_y.get("ratio", 0) < 1.0 else "FAIL")
+
+
+# X-Axis: Lateral Torsional Buckling
+st.markdown("#### Lateral Torsional Buckling (X-Axis)")
+st.write(f"Unbraced Length ($L_b$): {par.get('Length', 0)} in")
+
+# Lp
+render_latex(
+    lhs="L_p",
+    rhs="1.76 r_y \\sqrt{\\frac{E}{F_y}}",
+    subs={"r_y": "ry", "E": "29000", "F_y": mat.get("Fyld", 0)}, # ry not explicitly parsed, simplifying
+    ref="Eq.F2-5"
+)
+st.write(f"**Limiting Length ($L_p$):** {ltb_x.get('Lp', 0)} in")
+
+# Rts
+render_latex(
+    lhs="R_{ts}",
+    rhs="\\sqrt{\\frac{\\sqrt{I_y C_w}}{S_x}}",
+    subs={"I_y": props.get("Iyy", {}).get("value", 0), "C_w": props.get("Cw", {}).get("value", 0), "S_x": props.get("Sxx", {}).get("value", 0)},
+    ref="Eq.F2-7"
+)
+st.write(f"**Effective Radius of Gyration ($R_{{ts}}$):** {ltb_x.get('Rts', 0)} in")
+
+# Lr
+render_latex(
+    lhs="L_r",
+    rhs="1.95 R_{ts} \\frac{E}{0.7 F_y} \\sqrt{\\frac{J c}{S_x h_0} + \\sqrt{(\\frac{J c}{S_x h_0})^2 + 6.76 (\\frac{0.7 F_y}{E})^2}}",
+    subs={"R_{ts}": ltb_x.get("Rts", 0), "E": "29000", "F_y": mat.get("Fyld", 0)},
+    ref="Eq.F2-6"
+)
+st.write(f"**Limiting Length ($L_r$):** {ltb_x.get('Lr', 0)} in")
+
+# Cb
+st.write(f"**Moment Gradient Factor ($C_b$):** {ltb_x.get('Cb', 1.0)}")
+
+# Mnx
+render_latex(
+    lhs="M_{nx}",
+    rhs="C_b \\times [M_p - (M_p - 0.7 \\times F_y \\times S_x) \\times \\frac{L_b - L_p}{L_r - L_p}]",
+    subs={
+        "C_b": ltb_x.get("Cb", 1.0), 
+        "M_p": "Mp", 
+        "F_y": mat.get("Fyld", 0),
+        "L_b": par.get('Length', 0),
+        "L_p": ltb_x.get('Lp', 0),
+        "L_r": ltb_x.get('Lr', 0)
+    },
+    ref=f"{ltb_x.get('ref', '')} (Eq.F2-2)"
+)
+st.write(f"**Nominal Flexural Strength ($M_{{nx}}$):** {ltb_x.get('Mnx', 0)} kip-in")
+
+phi_mnx = phi_bend * ltb_x.get('Mnx', 0)
+render_latex(
+    lhs="\phi M_{nx}",
+    rhs=f"{phi_bend} \\times M_{{nx}}",
+    subs={"M_{nx}": ltb_x.get('Mnx', 0)}
+)
+st.write(f"**Design Capacity ($\phi M_{{nx}}$):** {phi_mnx:.2f} kip-in")
+result_card("Ratio", ltb_x.get("ratio", 0), "", "PASS" if ltb_x.get("ratio", 0) < 1.0 else "FAIL")
+
+
+# Flange Local Buckling (X)
+flb_x = checks.get("flb_x", {})
+st.markdown("#### Flange Local Buckling (X-Axis)")
+render_latex(
+    lhs="M_{nx}",
+    rhs="M_p - (M_p - 0.7 F_y S_x) \\frac{\lambda - \lambda_{pf}}{\lambda_{rf} - \lambda_{pf}}",
+    subs={}, 
+    ref=f"{flb_x.get('ref', '')} (Eq.F3-1)"
+)
+st.write(f"**Nominal Flexural Strength ($M_{{nx}}$):** {flb_x.get('Mnx', 0)} kip-in")
+
+phi_mnx_flb = phi_bend * flb_x.get('Mnx', 0)
+render_latex(
+    lhs="\phi M_{nx}",
+    rhs=f"{phi_bend} \\times M_{{nx}}",
+    subs={"M_{nx}": flb_x.get('Mnx', 0)}
+)
+st.write(f"**Design Capacity ($\phi M_{{nx}}$):** {phi_mnx_flb:.2f} kip-in")
+result_card("Ratio", flb_x.get("ratio", 0), "", "PASS" if flb_x.get("ratio", 0) < 1.0 else "FAIL")
+
+
+# Flange Local Buckling (Y)
+flb_y = checks.get("flb_y", {})
+st.markdown("#### Flange Local Buckling (Y-Axis)")
+render_latex(
+    lhs="M_{ny}",
+    rhs="M_p - (M_p - 0.7 F_y S_y) \\frac{\lambda - \lambda_{pf}}{\lambda_{rf} - \lambda_{pf}}",
+    subs={},
+    ref=f"{flb_y.get('ref', '')} (Eq.F6-2)"
+)
+st.write(f"**Nominal Flexural Strength ($M_{{ny}}$):** {flb_y.get('Mny', 0)} kip-in")
+
+phi_mny_flb = phi_bend * flb_y.get('Mny', 0)
+render_latex(
+    lhs="\phi M_{ny}",
+    rhs=f"{phi_bend} \\times M_{{ny}}",
+    subs={"M_{ny}": flb_y.get('Mny', 0)}
+)
+st.write(f"**Design Capacity ($\phi M_{{ny}}$):** {phi_mny_flb:.2f} kip-in")
+result_card("Ratio", flb_y.get("ratio", 0), "", "PASS" if flb_y.get("ratio", 0) < 1.0 else "FAIL")
 
 
 # 2.5 Interaction
@@ -717,17 +831,40 @@ section_header("2.5 Interaction Checks")
 inter = checks.get("interaction", {})
 
 st.markdown("#### Combined Axial and Flexure")
-st.info("Applicable when $P_r / P_c < 0.2$")
+
+# Extract values
+Pr = loads.get("Pz", {}).get("value", 0)
+Pc = inter.get("Pc", 0)
+Mrx = abs(loads.get("Mx", {}).get("value", 0))
+Mcx = inter.get("Mcx", 0)
+Mry = loads.get("My", {}).get("value", 0)
+Mcy = inter.get("Mcy", 0)
+
+# Check Pr/Pc ratio
+pr_pc_ratio = 0
+if Pc != 0:
+    pr_pc_ratio = Pr / Pc
+
+st.write(f"**Axial Ratio ($P_r / P_c$):** {Pr} / {Pc} = {pr_pc_ratio:.3f}")
+
+if pr_pc_ratio < 0.2:
+    st.success("Since $P_r / P_c < 0.2$, Equation H1-1b applies.")
+    eqn_lhs = "\\frac{P_r}{2P_c} + \\left( \\frac{M_{rx}}{M_{cx}} + \\frac{M_{ry}}{M_{cy}} \\right)"
+    ref_eqn = "Eq.H1-1b"
+else:
+    st.warning("Since $P_r / P_c \ge 0.2$, Equation H1-1a applies.")
+    eqn_lhs = "\\frac{P_r}{P_c} + \\frac{8}{9} \\left( \\frac{M_{rx}}{M_{cx}} + \\frac{M_{ry}}{M_{cy}} \\right)"
+    ref_eqn = "Eq.H1-1a"
 
 render_latex(
     lhs="Ratio",
-    rhs="\\frac{P_r}{2P_c} + (\\frac{M_{rx}}{M_{cx}} + \\frac{M_{ry}}{M_{cy}})",
+    rhs=eqn_lhs,
     subs={
-        "P_r": loads.get("Pz", {}).get("value", 0), "P_c": inter.get("Pc", 0),
-        "M_{rx}": abs(loads.get("Mx", {}).get("value", 0)), "M_{cx}": inter.get("Mcx", 0),
-        "M_{ry}": loads.get("My", {}).get("value", 0), "M_{cy}": inter.get("Mcy", 0)
+        "P_r": Pr, "P_c": Pc,
+        "M_{rx}": Mrx, "M_{cx}": Mcx,
+        "M_{ry}": Mry, "M_{cy}": Mcy
     },
-    ref=f"{inter.get('criteria', '')}"
+    ref=f"{inter.get('criteria', ref_eqn)}"
 )
 
 st.metric("Final Interaction Ratio", inter.get("ratio", 0))
