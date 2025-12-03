@@ -1082,48 +1082,52 @@ st.latex(f"M_{{ux}} = {format_val(ltb_x.get('demand', 0))} \\text{{ kip-in}}")
 result_card("Ratio", ltb_x.get("ratio", 0), "", "PASS" if ltb_x.get("ratio", 0) < 1.0 else "FAIL")
 
 
-# Flange Local Buckling (X)
-flb_x = checks.get("flb_x", {})
-st.markdown("#### Flange Local Buckling (X-Axis)")
-render_latex(
-    lhs="M_{nx}",
-    rhs="M_p - (M_p - 0.7 F_y S_x) \\frac{\lambda - \lambda_{pf}}{\lambda_{rf} - \lambda_{pf}}",
-    subs={}, 
-    ref=f"{flb_x.get('ref', '')} (Eq.F3-1)"
-)
-st.latex(f"M_{{nx}} = {format_val(flb_x.get('Mnx', 0))} \\text{{ kip-in}}")
+c_flb1, c_flb2 = st.columns(2)
 
-phi_mnx_flb = phi_bend * flb_x.get('Mnx', 0)
-render_latex(
-    lhs="\phi M_{nx}",
-    rhs=f"{phi_bend} \\times M_{{nx}}",
-    subs={"M_{nx}": format_val(flb_x.get('Mnx', 0))}
-)
-st.latex(f"\phi M_{{nx}} = {format_val(phi_mnx_flb)} \\text{{ kip-in}}")
-st.latex(f"M_{{ux}} = {format_val(flb_x.get('demand', 0))} \\text{{ kip-in}}")
-result_card("Ratio", flb_x.get("ratio", 0), "", "PASS" if flb_x.get("ratio", 0) < 1.0 else "FAIL")
+with c_flb1:
+    # Flange Local Buckling (X)
+    flb_x = checks.get("flb_x", {})
+    st.markdown("#### Flange Local Buckling (X-Axis)")
+    render_latex(
+        lhs="M_{nx}",
+        rhs="M_p - (M_p - 0.7 F_y S_x) \\frac{\lambda - \lambda_{pf}}{\lambda_{rf} - \lambda_{pf}}",
+        subs={}, 
+        ref=f"{flb_x.get('ref', '')} (Eq.F3-1)"
+    )
+    st.latex(f"M_{{nx}} = {format_val(flb_x.get('Mnx', 0))} \\text{{ kip-in}}")
+
+    phi_mnx_flb = phi_bend * flb_x.get('Mnx', 0)
+    render_latex(
+        lhs="\phi M_{nx}",
+        rhs=f"{phi_bend} \\times M_{{nx}}",
+        subs={"M_{nx}": format_val(flb_x.get('Mnx', 0))}
+    )
+    st.latex(f"\phi M_{{nx}} = {format_val(phi_mnx_flb)} \\text{{ kip-in}}")
+    st.latex(f"M_{{ux}} = {format_val(flb_x.get('demand', 0))} \\text{{ kip-in}}")
+    result_card("Ratio", flb_x.get("ratio", 0), "", "PASS" if flb_x.get("ratio", 0) < 1.0 else "FAIL")
 
 
-# Flange Local Buckling (Y)
-flb_y = checks.get("flb_y", {})
-st.markdown("#### Flange Local Buckling (Y-Axis)")
-render_latex(
-    lhs="M_{ny}",
-    rhs="M_p - (M_p - 0.7 F_y S_y) \\frac{\lambda - \lambda_{pf}}{\lambda_{rf} - \lambda_{pf}}",
-    subs={},
-    ref=f"{flb_y.get('ref', '')} (Eq.F6-2)"
-)
-st.latex(f"M_{{ny}} = {flb_y.get('Mny', 0)} \\text{{ kip-in}}")
+with c_flb2:
+    # Flange Local Buckling (Y)
+    flb_y = checks.get("flb_y", {})
+    st.markdown("#### Flange Local Buckling (Y-Axis)")
+    render_latex(
+        lhs="M_{ny}",
+        rhs="M_p - (M_p - 0.7 F_y S_y) \\frac{\lambda - \lambda_{pf}}{\lambda_{rf} - \lambda_{pf}}",
+        subs={},
+        ref=f"{flb_y.get('ref', '')} (Eq.F6-2)"
+    )
+    st.latex(f"M_{{ny}} = {format_val(flb_y.get('Mny', 0))} \\text{{ kip-in}}")
 
-phi_mny_flb = phi_bend * flb_y.get('Mny', 0)
-render_latex(
-    lhs="\phi M_{ny}",
-    rhs=f"{phi_bend} \\times M_{{ny}}",
-    subs={"M_{ny}": flb_y.get('Mny', 0)}
-)
-st.latex(f"\phi M_{{ny}} = {phi_mny_flb:.2f} \\text{{ kip-in}}")
-st.latex(f"M_{{uy}} = {flb_y.get('demand', 0)} \\text{{ kip-in}}")
-result_card("Ratio", flb_y.get("ratio", 0), "", "PASS" if flb_y.get("ratio", 0) < 1.0 else "FAIL")
+    phi_mny_flb = phi_bend * flb_y.get('Mny', 0)
+    render_latex(
+        lhs="\phi M_{ny}",
+        rhs=f"{phi_bend} \\times M_{{ny}}",
+        subs={"M_{ny}": format_val(flb_y.get('Mny', 0))}
+    )
+    st.latex(f"\phi M_{{ny}} = {format_val(phi_mny_flb)} \\text{{ kip-in}}")
+    st.latex(f"M_{{uy}} = {format_val(flb_y.get('demand', 0))} \\text{{ kip-in}}")
+    result_card("Ratio", flb_y.get("ratio", 0), "", "PASS" if flb_y.get("ratio", 0) < 1.0 else "FAIL")
 
 
 # 2.5 Interaction
