@@ -1,3 +1,4 @@
+
 import streamlit as st
 import pandas as pd
 import re
@@ -35,7 +36,7 @@ def parse_staad_report(text):
         "ftb": {"demand": 0, "capacity": 0, "ratio": 0, "ref": "", "Fe": 0, "Fcr": 0, "Pn": 0},
         "shear_x": {"demand": 0, "capacity": 0, "ratio": 0, "ref": "", "Cv": 0, "Vnx": 0},
         "shear_y": {"demand": 0, "capacity": 0, "ratio": 0, "ref": "", "Cv": 0, "Vny": 0},
-        "ltb_x": {"demand": 0, "capacity": 0, "ratio": 0, "ref": "", "Mnx": 0, "Cb": 1.0, "Lp": 0, "Lr": 0, "Rts": 0},
+        "ltb_x": {"demand": 0, "capacity": 0, "ratio": 0, "ref": "", "Mnx": 0, "Cb": 1.0, "Lp": 0, "Lr": 0, "Rts": 0, "C": 1.0},
         "flb_x": {"demand": 0, "capacity": 0, "ratio": 0, "ref": "", "Mnx": 0},
         "flb_y": {"demand": 0, "capacity": 0, "ratio": 0, "ref": "", "Mny": 0},
         "flb_y": {"demand": 0, "capacity": 0, "ratio": 0, "ref": "", "Mny": 0},
@@ -255,10 +256,13 @@ def parse_staad_report(text):
                      checks["ltb_x"]["ratio"] = float(vals[2])
                      checks["ltb_x"]["ref"] = "Cl.F2.2"
             if "Nom L-T-B Cap" in line: checks["ltb_x"]["Mnx"] = parse_value(line, "Mnx")
-            if "Mom. Distr. factor" in line: checks["ltb_x"]["Cb"] = parse_value(line, "CbX")
-            if "Limiting Unbraced Length" in line and "LpX" in line: checks["ltb_x"]["Lp"] = parse_value(line, "LpX")
-            if "Limiting Unbraced Length" in line and "LrX" in line: checks["ltb_x"]["Lr"] = parse_value(line, "LrX")
-            if "Effective Rad. of Gyr." in line: checks["ltb_x"]["Rts"] = parse_value(line, "Rts")
+            if "CbX" in line: checks["ltb_x"]["Cb"] = parse_value(line, "CbX")
+            elif "Cb" in line: checks["ltb_x"]["Cb"] = parse_value(line, "Cb")
+            
+            if "LpX" in line: checks["ltb_x"]["Lp"] = parse_value(line, "LpX")
+            if "LrX" in line: checks["ltb_x"]["Lr"] = parse_value(line, "LrX")
+            if "Rts" in line: checks["ltb_x"]["Rts"] = parse_value(line, "Rts")
+            if "Cx" in line: checks["ltb_x"]["C"] = parse_value(line, "Cx")
 
         elif current_section == "flb_x":
             if "Cl.F" in line and "DEMAND" not in line:
@@ -530,7 +534,7 @@ def calculate_results(data):
     # LTB (X-Axis - Major)
     Lp = 1.76 * ry * (E/Fy)**0.5 if ry > 0 else 0
     rts = ((Iyy * Cw)**0.5 / Sxx)**0.5 if Sxx > 0 else 0
-    c = 1.0
+    c = checks["ltb_x"].get("C", 1.0)
     
     if rts > 0 and h0 > 0:
         term_lr1 = 1.95 * rts * E / (0.7 * Fy)
