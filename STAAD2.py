@@ -1,10 +1,10 @@
  (cd "$(git rev-parse --show-toplevel)" && git apply --3way <<'EOF' 
 diff --git a/app.py b/app.py
 new file mode 100644
-index 0000000000000000000000000000000000000000..a2c28fb8a76d4d197eab459656bf360d9933b541
+index 0000000000000000000000000000000000000000..d8f26d6e5204a994cdd1c3161c7d5a69d809fd84
 --- /dev/null
 +++ b/app.py
-@@ -0,0 +1,555 @@
+@@ -0,0 +1,591 @@
 +import math
 +import re
 +from dataclasses import dataclass
@@ -171,13 +171,21 @@ index 0000000000000000000000000000000000000000..a2c28fb8a76d4d197eab459656bf360d
 +
 +@dataclass
 +class SectionProperties:
-+    ag: float
-+    ixx: float
-+    iyy: float
-+    zxx: float
-+    zyy: float
-+    sxx: float
-+    syy: float
++    ag: Optional[float]
++    axx: Optional[float] = None
++    ayy: Optional[float] = None
++    ixx: Optional[float] = None
++    iyy: Optional[float] = None
++    j: Optional[float] = None
++    zxx: Optional[float] = None
++    zyy: Optional[float] = None
++    sxx_pos: Optional[float] = None
++    sxx_neg: Optional[float] = None
++    syy_pos: Optional[float] = None
++    syy_neg: Optional[float] = None
++    cw: Optional[float] = None
++    x0: Optional[float] = None
++    y0: Optional[float] = None
 +
 +
 +@dataclass
@@ -216,12 +224,20 @@ index 0000000000000000000000000000000000000000..a2c28fb8a76d4d197eab459656bf360d
 +    values.update(
 +        {
 +            "ag": extract_value(r"Ag\s*:\s*([0-9.E+-]+)", text),
++            "axx": extract_value(r"Axx\s*:\s*([0-9.E+-]+)", text),
++            "ayy": extract_value(r"Ayy\s*:\s*([0-9.E+-]+)", text),
 +            "ixx": extract_value(r"Ixx\s*:\s*([0-9.E+-]+)", text),
 +            "iyy": extract_value(r"Iyy\s*:\s*([0-9.E+-]+)", text),
++            "j": extract_value(r"J\s*:\s*([0-9.E+-]+)", text),
 +            "zxx": extract_value(r"Zxx\s*:\s*([0-9.E+-]+)", text),
 +            "zyy": extract_value(r"Zyy\s*:\s*([0-9.E+-]+)", text),
-+            "sxx": extract_value(r"Sxx\+?:\s*([0-9.E+-]+)", text),
-+            "syy": extract_value(r"Syy\+?:\s*([0-9.E+-]+)", text),
++            "sxx_pos": extract_value(r"Sxx\+:\s*([0-9.E+-]+)", text),
++            "sxx_neg": extract_value(r"Sxx-:\s*([0-9.E+-]+)", text),
++            "syy_pos": extract_value(r"Syy\+:\s*([0-9.E+-]+)", text),
++            "syy_neg": extract_value(r"Syy-:\s*([0-9.E+-]+)", text),
++            "cw": extract_value(r"Cw\s*:\s*([0-9.E+-]+)", text),
++            "x0": extract_value(r"x0\s*:\s*([0-9.E+-]+)", text),
++            "y0": extract_value(r"y0\s*:\s*([0-9.E+-]+)", text),
 +        }
 +    )
 +
@@ -328,10 +344,10 @@ index 0000000000000000000000000000000000000000..a2c28fb8a76d4d197eab459656bf360d
 +
 +def flexural_capacity(values: Dict[str, float]) -> Dict[str, float]:
 +    fy = values["fy"]
-+    zxx = values["zxx"]
-+    zyy = values["zyy"]
-+    sxx = values["sxx"]
-+    syy = values["syy"]
++    zxx = values.get("zxx") or 0
++    zyy = values.get("zyy") or 0
++    sxx = values.get("sxx_pos") or values.get("sxx_neg") or 0
++    syy = values.get("syy_pos") or values.get("syy_neg") or 0
 +    cb = values.get("cbx", 1.0)
 +    lp = values.get("lpx", 0)
 +    lr = values.get("lrx", 0)
@@ -449,21 +465,37 @@ index 0000000000000000000000000000000000000000..a2c28fb8a76d4d197eab459656bf360d
 +
 +    section_props = SectionProperties(
 +        ag=values.get("ag"),
++        axx=values.get("axx"),
++        ayy=values.get("ayy"),
 +        ixx=values.get("ixx"),
 +        iyy=values.get("iyy"),
++        j=values.get("j"),
 +        zxx=values.get("zxx"),
 +        zyy=values.get("zyy"),
-+        sxx=values.get("sxx"),
-+        syy=values.get("syy"),
++        sxx_pos=values.get("sxx_pos"),
++        sxx_neg=values.get("sxx_neg"),
++        syy_pos=values.get("syy_pos"),
++        syy_neg=values.get("syy_neg"),
++        cw=values.get("cw"),
++        x0=values.get("x0"),
++        y0=values.get("y0"),
 +    )
 +    section_rows = [
 +        ("Ag", format_value(section_props.ag, "in²"), "Gross area of the section"),
++        ("Axx", format_value(section_props.axx, "in²"), "Shear area for torsion about the major (x) axis"),
++        ("Ayy", format_value(section_props.ayy, "in²"), "Shear area for torsion about the minor (y) axis"),
 +        ("Ixx", format_value(section_props.ixx, "in⁴", 2), "Moment of inertia about the major (x) axis"),
 +        ("Iyy", format_value(section_props.iyy, "in⁴", 2), "Moment of inertia about the minor (y) axis"),
++        ("J", format_value(section_props.j, "in⁴", 3), "Torsional constant"),
 +        ("Zxx", format_value(section_props.zxx, "in³", 2), "Plastic section modulus about the major (x) axis"),
 +        ("Zyy", format_value(section_props.zyy, "in³", 2), "Plastic section modulus about the minor (y) axis"),
-+        ("Sxx", format_value(section_props.sxx, "in³", 2), "Elastic section modulus about the major (x) axis"),
-+        ("Syy", format_value(section_props.syy, "in³", 2), "Elastic section modulus about the minor (y) axis"),
++        ("Sxx+", format_value(section_props.sxx_pos, "in³", 2), "Elastic section modulus (tension flange in compression) about x"),
++        ("Sxx-", format_value(section_props.sxx_neg, "in³", 2), "Elastic section modulus (tension flange in tension) about x"),
++        ("Syy+", format_value(section_props.syy_pos, "in³", 2), "Elastic section modulus (top in compression) about y"),
++        ("Syy-", format_value(section_props.syy_neg, "in³", 2), "Elastic section modulus (top in tension) about y"),
++        ("Cw", format_value(section_props.cw, "in⁶", 3), "Warping constant"),
++        ("x0", format_value(section_props.x0, "in", 3), "Shear center offset from the centroid along x"),
++        ("y0", format_value(section_props.y0, "in", 3), "Shear center offset from the centroid along y"),
 +    ]
 +    display_definition_table("Section properties (definitions)", section_rows)
 +
@@ -527,10 +559,14 @@ index 0000000000000000000000000000000000000000..a2c28fb8a76d4d197eab459656bf360d
 +
 +    st.subheader("Flexural strength")
 +    flex = flexural_capacity(values)
++    sxx_used = section_props.sxx_pos or section_props.sxx_neg or 0
++
 +    st.latex(
 +        r"M_{p,x} = F_y Z_x = %.1f \times %.3f = %.1f\ \text{kip-in}" % (material.fy, section_props.zxx, flex["Mp_x"])
 +    )
-+    st.latex(r"M_{r,x} = 0.7 F_y S_x = 0.7 \times %.1f \times %.3f = %.1f\ \text{kip-in}" % (material.fy, section_props.sxx, flex["Mr_x"]))
++    st.latex(
++        r"M_{r,x} = 0.7 F_y S_x = 0.7 \times %.1f \times %.3f = %.1f\ \text{kip-in}" % (material.fy, sxx_used, flex["Mr_x"])
++    )
 +    st.latex(
 +        r"M_{n,LTB} = C_b \left[M_p - (M_p - M_r) \frac{L_b - L_p}{L_r - L_p}\right] = %.2f\ \text{kip-in}" % flex["Mn_LTB"]
 +    )
