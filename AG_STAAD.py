@@ -41,6 +41,19 @@ def parse_staad_report(text):
         "flexure_y": {"demand": 0, "capacity": 0, "ratio": 0, "ref": "", "Mny": 0},
         "interaction": {"ratio": 0, "criteria": "", "Pc": 0, "Mcx": 0, "Mcy": 0}
     }
+
+    # Initialize classification structure
+    classification = {
+        "compression": {
+            "flange": {"status": "", "lambda": 0, "lambda_p": "N/A", "lambda_r": 0, "case": ""},
+            "web": {"status": "", "lambda": 0, "lambda_p": "N/A", "lambda_r": 0, "case": ""}
+        },
+        "flexure": {
+            "flange": {"status": "", "lambda": 0, "lambda_p": 0, "lambda_r": 0, "case": ""},
+            "web": {"status": "", "lambda": 0, "lambda_p": 0, "lambda_r": 0, "case": ""}
+        }
+    }
+    data["classification"] = classification
     
     current_section = None
     
@@ -76,8 +89,8 @@ def parse_staad_report(text):
         # Properties
         if "Ag  :" in line:
             data["properties"]["Ag"] = {"value": parse_value(line, "Ag"), "unit": "in²"}
-            data["properties"]["Awxx"] = {"value": parse_value(line, "Axx"), "unit": "in²"}
-            data["properties"]["Awyy"] = {"value": parse_value(line, "Ayy"), "unit": "in²"}
+            data["properties"]["Axx"] = {"value": parse_value(line, "Axx"), "unit": "in²"}
+            data["properties"]["Ayy"] = {"value": parse_value(line, "Ayy"), "unit": "in²"}
         if "Ixx :" in line:
             data["properties"]["Ixx"] = {"value": parse_value(line, "Ixx"), "unit": "in⁴"}
             data["properties"]["Iyy"] = {"value": parse_value(line, "Iyy"), "unit": "in⁴"}
@@ -117,6 +130,8 @@ def parse_staad_report(text):
         elif "FLANGE LOCAL BUCK(X)" in line: current_section = "flb_x"
         elif "FLANGE LOCAL BUCK(Y)" in line: current_section = "flb_y"
         elif "COMBINED FORCES CLAUSE H1" in line: current_section = "inter"
+        elif "COMPRESSION CLASSIFICATION" in line: current_section = "class_comp"
+        elif "FLEXURE CLASSIFICATION" in line: current_section = "class_flex"
 
         # Parsing based on section
         # We look for lines that contain specific keywords or patterns
@@ -264,6 +279,46 @@ def parse_staad_report(text):
             if "Moment Capacity" in line and "Mcx" in line: checks["interaction"]["Mcx"] = parse_value(line, "Mcx")
             if "Moment Capacity" in line and "Mcy" in line: checks["interaction"]["Mcy"] = parse_value(line, "Mcy")
 
+        elif current_section == "class_comp":
+            # Flange: NonSlender       9.20       N/A      13.49     Table.4.1a.Case1
+            if "Flange:" in line:
+                m = re.search(r"Flange:\s+(\w+)\s+([\d.]+)\s+(N/A|[\d.]+)\s+(N/A|[\d.]+)\s+([\w.]+)", line)
+                if m:
+                    data["classification"]["compression"]["flange"] = {
+                        "status": m.group(1), "lambda": float(m.group(2)), 
+                        "lambda_p": m.group(3), "lambda_r": float(m.group(4)) if m.group(4) != "N/A" else "N/A",
+                        "case": m.group(5)
+                    }
+            if "Web   :" in line:
+                m = re.search(r"Web\s+:\s+(\w+)\s+([\d.]+)\s+(N/A|[\d.]+)\s+(N/A|[\d.]+)\s+([\w.]+)", line)
+                if m:
+                    data["classification"]["compression"]["web"] = {
+                        "status": m.group(1), "lambda": float(m.group(2)), 
+                        "lambda_p": m.group(3), "lambda_r": float(m.group(4)) if m.group(4) != "N/A" else "N/A",
+                        "case": m.group(5)
+                    }
+
+        elif current_section == "class_flex":
+            # Flange: NonCompact       9.20       9.15     24.08     Table.4.1b.Case10
+            if "Flange:" in line:
+                m = re.search(r"Flange:\s+(\w+)\s+([\d.]+)\s+(N/A|[\d.]+)\s+(N/A|[\d.]+)\s+([\w.]+)", line)
+                if m:
+                    data["classification"]["flexure"]["flange"] = {
+                        "status": m.group(1), "lambda": float(m.group(2)), 
+                        "lambda_p": float(m.group(3)) if m.group(3) != "N/A" else "N/A", 
+                        "lambda_r": float(m.group(4)) if m.group(4) != "N/A" else "N/A",
+                        "case": m.group(5)
+                    }
+            if "Web   :" in line:
+                m = re.search(r"Web\s+:\s+(\w+)\s+([\d.]+)\s+(N/A|[\d.]+)\s+(N/A|[\d.]+)\s+([\w.]+)", line)
+                if m:
+                    data["classification"]["flexure"]["web"] = {
+                        "status": m.group(1), "lambda": float(m.group(2)), 
+                        "lambda_p": float(m.group(3)) if m.group(3) != "N/A" else "N/A", 
+                        "lambda_r": float(m.group(4)) if m.group(4) != "N/A" else "N/A",
+                        "case": m.group(5)
+                    }
+
     # Fallback for Cb if not found in LTB section (sometimes in params)
     if checks["ltb_x"]["Cb"] == 1.0 and "Cb" in data["params"]:
         pass
@@ -318,6 +373,16 @@ default_member_data = {
         "Kx": 2.00,
         "Ky": 2.00,
         "Cb": 1.00
+    },
+    "classification": {
+        "compression": {
+            "flange": {"status": "NonSlender", "lambda": 9.20, "lambda_p": "N/A", "lambda_r": 13.49, "case": "Table.4.1a.Case1"},
+            "web": {"status": "NonSlender", "lambda": 22.25, "lambda_p": "N/A", "lambda_r": 35.88, "case": "Table.4.1a.Case5"}
+        },
+        "flexure": {
+            "flange": {"status": "NonCompact", "lambda": 9.20, "lambda_p": 9.15, "lambda_r": 24.08, "case": "Table.4.1b.Case10"},
+            "web": {"status": "Compact", "lambda": 22.25, "lambda_p": 90.55, "lambda_r": 137.27, "case": "Table.4.1b.Case15"}
+        }
     },
     "checks": {
         "tension_yielding": {
@@ -387,7 +452,6 @@ def render_latex(lhs, rhs, subs=None, ref=None):
         for key, value in subs.items():
             sub_rhs = sub_rhs.replace(key, f"{value}")
             
-        st.markdown(f"*Substitution:*")
         st.latex(f"{lhs} = {sub_rhs}")
 
 def section_header(title):
@@ -496,6 +560,83 @@ with c2:
     st.write(f"- Effective Length Factors: $K_x={par.get('Kx', 0)}, K_y={par.get('Ky', 0)}$")
     st.write(f"- LTB Modification Factor ($C_b$): {par.get('Cb', 1.0)}")
 
+# --- 1.4 Classification ---
+st.header("1.4 Slenderness Classification")
+cls = member_data.get("classification", default_member_data["classification"])
+
+c_cls1, c_cls2 = st.columns(2)
+
+with c_cls1:
+    st.subheader("Compression (Table B4.1a)")
+    comp_cls = cls["compression"]
+    
+    # Flange
+    f_c = comp_cls["flange"]
+    st.markdown(f"**Flange**: {f_c['status']}")
+    st.write(f"Case: {f_c['case']}")
+    st.latex(f"\lambda = {f_c['lambda']}")
+    st.latex(f"\lambda_r = {f_c['lambda_r']}")
+    if f_c['lambda_r'] != "N/A" and f_c['lambda'] < float(f_c['lambda_r']):
+        st.success(f"$\lambda < \lambda_r$ \u2192 Non-Slender")
+    else:
+        st.warning(f"Check Slenderness")
+
+    st.markdown("---")
+    
+    # Web
+    w_c = comp_cls["web"]
+    st.markdown(f"**Web**: {w_c['status']}")
+    st.write(f"Case: {w_c['case']}")
+    st.latex(f"\lambda = {w_c['lambda']}")
+    st.latex(f"\lambda_r = {w_c['lambda_r']}")
+    if w_c['lambda_r'] != "N/A" and w_c['lambda'] < float(w_c['lambda_r']):
+        st.success(f"$\lambda < \lambda_r$ \u2192 Non-Slender")
+    else:
+        st.warning(f"Check Slenderness")
+
+with c_cls2:
+    st.subheader("Flexure (Table B4.1b)")
+    flex_cls = cls["flexure"]
+    
+    # Flange
+    f_f = flex_cls["flange"]
+    st.markdown(f"**Flange**: {f_f['status']}")
+    st.write(f"Case: {f_f['case']}")
+    st.latex(f"\lambda = {f_f['lambda']}")
+    st.latex(f"\lambda_p = {f_f['lambda_p']}, \lambda_r = {f_f['lambda_r']}")
+    
+    if f_f['lambda_p'] != "N/A" and f_f['lambda_r'] != "N/A":
+        lp = float(f_f['lambda_p'])
+        lr = float(f_f['lambda_r'])
+        lam = f_f['lambda']
+        if lam <= lp:
+            st.success(f"$\lambda \le \lambda_p$ \u2192 Compact")
+        elif lam <= lr:
+            st.warning(f"$\lambda_p < \lambda \le \lambda_r$ \u2192 Non-Compact")
+        else:
+            st.error(f"$\lambda > \lambda_r$ \u2192 Slender")
+
+    st.markdown("---")
+
+    # Web
+    w_f = flex_cls["web"]
+    st.markdown(f"**Web**: {w_f['status']}")
+    st.write(f"Case: {w_f['case']}")
+    st.latex(f"\lambda = {w_f['lambda']}")
+    st.latex(f"\lambda_p = {w_f['lambda_p']}, \lambda_r = {w_f['lambda_r']}")
+    
+    if w_f['lambda_p'] != "N/A" and w_f['lambda_r'] != "N/A":
+        lp = float(w_f['lambda_p'])
+        lr = float(w_f['lambda_r'])
+        lam = w_f['lambda']
+        if lam <= lp:
+            st.success(f"$\lambda \le \lambda_p$ \u2192 Compact")
+        elif lam <= lr:
+            st.warning(f"$\lambda_p < \lambda \le \lambda_r$ \u2192 Non-Compact")
+        else:
+            st.error(f"$\lambda > \lambda_r$ \u2192 Slender")
+
+
 # --- 2. Detailed Calculations ---
 st.header("2. Detailed Calculations")
 
@@ -518,7 +659,7 @@ render_latex(
     subs={"F_y": Fy, "A_g": Ag},
     ref=f"{t_yield.get('ref', '')} ({t_yield.get('eqn', '')})"
 )
-st.write(f"**Nominal Strength ($P_n$):** {Pn_val} kips")
+st.latex(f"P_n = {Pn_val} \\text{{ kips}}")
 
 phi = 0.9
 phi_pn = phi * Pn_val
@@ -527,7 +668,8 @@ render_latex(
     rhs=f"{phi} \\times P_n",
     subs={"P_n": Pn_val}
 )
-st.write(f"**Design Capacity ($\phi P_n$):** {phi_pn:.2f} kips")
+st.latex(f"\phi P_n = {phi_pn:.2f} \\text{{ kips}}")
+st.latex(f"P_u = {t_yield.get('demand', 0)} \\text{{ kips}}")
 result_card("Ratio", t_yield.get("ratio", 0), "", "PASS" if t_yield.get("ratio", 0) < 1.0 else "FAIL")
 
 st.markdown("#### Tensile Rupture")
@@ -542,7 +684,7 @@ render_latex(
     subs={"F_u": Fu, "A_e": Ae},
     ref=f"{t_rupture.get('ref', '')} ({t_rupture.get('eqn', '')})"
 )
-st.write(f"**Nominal Strength ($P_n$):** {Pn_rupture} kips")
+st.latex(f"P_n = {Pn_rupture} \\text{{ kips}}")
 
 phi_rupture = 0.75
 phi_pn_rupture = phi_rupture * Pn_rupture
@@ -551,7 +693,8 @@ render_latex(
     rhs=f"{phi_rupture} \\times P_n",
     subs={"P_n": Pn_rupture}
 )
-st.write(f"**Design Capacity ($\phi P_n$):** {phi_pn_rupture:.2f} kips")
+st.latex(f"\phi P_n = {phi_pn_rupture:.2f} \\text{{ kips}}")
+st.latex(f"P_u = {t_rupture.get('demand', 0)} \\text{{ kips}}")
 result_card("Ratio", t_rupture.get("ratio", 0), "", "PASS" if t_rupture.get("ratio", 0) < 1.0 else "FAIL")
 
 
@@ -572,7 +715,7 @@ render_latex(
     subs={"E": "29000", "L_{cx}/r_x": comp_x.get('Lcx_rx', 0)},
     ref="Eq.E3-4"
 )
-st.write(f"**Elastic Buckling Stress ($F_{{ex}}$):** {comp_x.get('Fex', 0)} ksi")
+st.latex(f"F_{{ex}} = {comp_x.get('Fex', 0)} \\text{{ ksi}}")
 
 # FcrX
 render_latex(
@@ -581,7 +724,7 @@ render_latex(
     subs={"F_y": mat.get("Fyld", 0), "F_{ex}": comp_x.get("Fex", 0)},
     ref=f"{comp_x.get('ref', '')} (Eq.E3-2)"
 )
-st.write(f"**Critical Stress ($F_{{crx}}$):** {comp_x.get('Fcrx', 0)} ksi")
+st.latex(f"F_{{crx}} = {comp_x.get('Fcrx', 0)} \\text{{ ksi}}")
 
 # PnX
 render_latex(
@@ -590,7 +733,7 @@ render_latex(
     subs={"F_{crx}": comp_x.get("Fcrx", 0), "A_g": props.get("Ag", {}).get("value", 0)},
     ref="Eq.E3-1"
 )
-st.write(f"**Nominal Strength ($P_{{nx}}$):** {comp_x.get('Pnx', 0)} kips")
+st.latex(f"P_{{nx}} = {comp_x.get('Pnx', 0)} \\text{{ kips}}")
 
 # Phi PnX
 phi_pnx = phi_comp * comp_x.get('Pnx', 0)
@@ -599,7 +742,8 @@ render_latex(
     rhs=f"{phi_comp} \\times P_{{nx}}",
     subs={"P_{nx}": comp_x.get('Pnx', 0)}
 )
-st.write(f"**Design Capacity ($\phi P_{{nx}}$):** {phi_pnx:.2f} kips")
+st.latex(f"\phi P_{{nx}} = {phi_pnx:.2f} \\text{{ kips}}")
+st.latex(f"P_u = {comp_x.get('demand', 0)} \\text{{ kips}}")
 result_card("Ratio", comp_x.get("ratio", 0), "", "PASS" if comp_x.get("ratio", 0) < 1.0 else "FAIL")
 
 
@@ -614,7 +758,7 @@ render_latex(
     subs={"E": "29000", "L_{cy}/r_y": comp_y.get('Lcy_ry', 0)},
     ref="Eq.E3-4"
 )
-st.write(f"**Elastic Buckling Stress ($F_{{ey}}$):** {comp_y.get('Fey', 0)} ksi")
+st.latex(f"F_{{ey}} = {comp_y.get('Fey', 0)} \\text{{ ksi}}")
 
 # FcrY
 render_latex(
@@ -623,7 +767,7 @@ render_latex(
     subs={"F_y": mat.get("Fyld", 0), "F_{ey}": comp_y.get("Fey", 0)},
     ref=f"{comp_y.get('ref', '')} (Eq.E3-2)"
 )
-st.write(f"**Critical Stress ($F_{{cry}}$):** {comp_y.get('Fcry', 0)} ksi")
+st.latex(f"F_{{cry}} = {comp_y.get('Fcry', 0)} \\text{{ ksi}}")
 
 # PnY
 render_latex(
@@ -632,7 +776,7 @@ render_latex(
     subs={"F_{cry}": comp_y.get("Fcry", 0), "A_g": props.get("Ag", {}).get("value", 0)},
     ref="Eq.E3-1"
 )
-st.write(f"**Nominal Strength ($P_{{ny}}$):** {comp_y.get('Pny', 0)} kips")
+st.latex(f"P_{{ny}} = {comp_y.get('Pny', 0)} \\text{{ kips}}")
 
 # Phi PnY
 phi_pny = phi_comp * comp_y.get('Pny', 0)
@@ -641,7 +785,8 @@ render_latex(
     rhs=f"{phi_comp} \\times P_{{ny}}",
     subs={"P_{ny}": comp_y.get('Pny', 0)}
 )
-st.write(f"**Design Capacity ($\phi P_{{ny}}$):** {phi_pny:.2f} kips")
+st.latex(f"\phi P_{{ny}} = {phi_pny:.2f} \\text{{ kips}}")
+st.latex(f"P_u = {comp_y.get('demand', 0)} \\text{{ kips}}")
 result_card("Ratio", comp_y.get("ratio", 0), "", "PASS" if comp_y.get("ratio", 0) < 1.0 else "FAIL")
 
 
@@ -656,7 +801,7 @@ render_latex(
     subs={},
     ref=f"{ftb.get('ref', '')} (Eq.E4-2)"
 )
-st.write(f"**Elastic F-T-B Stress ($F_e$):** {ftb.get('Fe', 0)} ksi")
+st.latex(f"F_e = {ftb.get('Fe', 0)} \\text{{ ksi}}")
 
 # Fcr
 render_latex(
@@ -665,7 +810,7 @@ render_latex(
     subs={"F_y": mat.get("Fyld", 0), "F_e": ftb.get("Fe", 0)},
     ref="Eq.E3-2"
 )
-st.write(f"**Critical Stress ($F_{{cr}}$):** {ftb.get('Fcr', 0)} ksi")
+st.latex(f"F_{{cr}} = {ftb.get('Fcr', 0)} \\text{{ ksi}}")
 
 # Pn
 render_latex(
@@ -674,7 +819,7 @@ render_latex(
     subs={"F_{cr}": ftb.get("Fcr", 0), "A_g": props.get("Ag", {}).get("value", 0)},
     ref="Eq.E4-1"
 )
-st.write(f"**Nominal Strength ($P_n$):** {ftb.get('Pn', 0)} kips")
+st.latex(f"P_n = {ftb.get('Pn', 0)} \\text{{ kips}}")
 
 # Phi Pn
 phi_ftb = 0.9
@@ -684,7 +829,8 @@ render_latex(
     rhs=f"{phi_ftb} \\times P_n",
     subs={"P_n": ftb.get('Pn', 0)}
 )
-st.write(f"**Design Capacity ($\phi P_n$):** {phi_pn_ftb:.2f} kips")
+st.latex(f"\phi P_n = {phi_pn_ftb:.2f} \\text{{ kips}}")
+st.latex(f"P_u = {ftb.get('demand', 0)} \\text{{ kips}}")
 result_card("Ratio", ftb.get("ratio", 0), "", "PASS" if ftb.get("ratio", 0) < 1.0 else "FAIL")
 
 
@@ -702,7 +848,8 @@ with c_s1:
         subs={"F_y": mat.get("Fyld", 0), "A_w": "Aw", "C_v": shear_x.get("Cv", 0)},
         ref=f"{shear_x.get('ref', '')} (Eq.G2-1)"
     )
-    st.write(f"**Capacity ($V_{{nx}}$):** {shear_x.get('Vnx', 0)} kips")
+    st.latex(f"V_{{nx}} = {shear_x.get('Vnx', 0)} \\text{{ kips}}")
+    st.latex(f"V_{{ux}} = {shear_x.get('demand', 0)} \\text{{ kips}}")
     result_card("Ratio", shear_x.get("ratio", 0), "", "PASS" if shear_x.get("ratio", 0) < 1.0 else "FAIL")
 
 with c_s2:
@@ -713,7 +860,8 @@ with c_s2:
         subs={"F_y": mat.get("Fyld", 0), "A_w": "Aw", "C_v": shear_y.get("Cv", 0)},
         ref=f"{shear_y.get('ref', '')} (Eq.G2-1)"
     )
-    st.write(f"**Capacity ($V_{{ny}}$):** {shear_y.get('Vny', 0)} kips")
+    st.latex(f"V_{{ny}} = {shear_y.get('Vny', 0)} \\text{{ kips}}")
+    st.latex(f"V_{{uy}} = {shear_y.get('demand', 0)} \\text{{ kips}}")
     result_card("Ratio", shear_y.get("ratio", 0), "", "PASS" if shear_y.get("ratio", 0) < 1.0 else "FAIL")
 
 
@@ -731,7 +879,7 @@ render_latex(
     subs={"F_y": mat.get("Fyld", 0), "Z_y": props.get("Zyy", {}).get("value", 0)},
     ref=f"{flex_y.get('ref', '')} (Eq.F6-1)"
 )
-st.write(f"**Nominal Flexural Strength ($M_{{ny}}$):** {flex_y.get('Mny', 0)} kip-in")
+st.latex(f"M_{{ny}} = {flex_y.get('Mny', 0)} \\text{{ kip-in}}")
 
 phi_mny = phi_bend * flex_y.get('Mny', 0)
 render_latex(
@@ -739,7 +887,8 @@ render_latex(
     rhs=f"{phi_bend} \\times M_{{ny}}",
     subs={"M_{ny}": flex_y.get('Mny', 0)}
 )
-st.write(f"**Design Capacity ($\phi M_{{ny}}$):** {phi_mny:.2f} kip-in")
+st.latex(f"\phi M_{{ny}} = {phi_mny:.2f} \\text{{ kip-in}}")
+st.latex(f"M_{{uy}} = {flex_y.get('demand', 0)} \\text{{ kip-in}}")
 result_card("Ratio", flex_y.get("ratio", 0), "", "PASS" if flex_y.get("ratio", 0) < 1.0 else "FAIL")
 
 
@@ -791,7 +940,7 @@ render_latex(
     },
     ref=f"{ltb_x.get('ref', '')} (Eq.F2-2)"
 )
-st.write(f"**Nominal Flexural Strength ($M_{{nx}}$):** {ltb_x.get('Mnx', 0)} kip-in")
+st.latex(f"M_{{nx}} = {ltb_x.get('Mnx', 0)} \\text{{ kip-in}}")
 
 phi_mnx = phi_bend * ltb_x.get('Mnx', 0)
 render_latex(
@@ -799,7 +948,8 @@ render_latex(
     rhs=f"{phi_bend} \\times M_{{nx}}",
     subs={"M_{nx}": ltb_x.get('Mnx', 0)}
 )
-st.write(f"**Design Capacity ($\phi M_{{nx}}$):** {phi_mnx:.2f} kip-in")
+st.latex(f"\phi M_{{nx}} = {phi_mnx:.2f} \\text{{ kip-in}}")
+st.latex(f"M_{{ux}} = {ltb_x.get('demand', 0)} \\text{{ kip-in}}")
 result_card("Ratio", ltb_x.get("ratio", 0), "", "PASS" if ltb_x.get("ratio", 0) < 1.0 else "FAIL")
 
 
@@ -812,7 +962,7 @@ render_latex(
     subs={}, 
     ref=f"{flb_x.get('ref', '')} (Eq.F3-1)"
 )
-st.write(f"**Nominal Flexural Strength ($M_{{nx}}$):** {flb_x.get('Mnx', 0)} kip-in")
+st.latex(f"M_{{nx}} = {flb_x.get('Mnx', 0)} \\text{{ kip-in}}")
 
 phi_mnx_flb = phi_bend * flb_x.get('Mnx', 0)
 render_latex(
@@ -820,7 +970,8 @@ render_latex(
     rhs=f"{phi_bend} \\times M_{{nx}}",
     subs={"M_{nx}": flb_x.get('Mnx', 0)}
 )
-st.write(f"**Design Capacity ($\phi M_{{nx}}$):** {phi_mnx_flb:.2f} kip-in")
+st.latex(f"\phi M_{{nx}} = {phi_mnx_flb:.2f} \\text{{ kip-in}}")
+st.latex(f"M_{{ux}} = {flb_x.get('demand', 0)} \\text{{ kip-in}}")
 result_card("Ratio", flb_x.get("ratio", 0), "", "PASS" if flb_x.get("ratio", 0) < 1.0 else "FAIL")
 
 
@@ -833,7 +984,7 @@ render_latex(
     subs={},
     ref=f"{flb_y.get('ref', '')} (Eq.F6-2)"
 )
-st.write(f"**Nominal Flexural Strength ($M_{{ny}}$):** {flb_y.get('Mny', 0)} kip-in")
+st.latex(f"M_{{ny}} = {flb_y.get('Mny', 0)} \\text{{ kip-in}}")
 
 phi_mny_flb = phi_bend * flb_y.get('Mny', 0)
 render_latex(
@@ -841,7 +992,8 @@ render_latex(
     rhs=f"{phi_bend} \\times M_{{ny}}",
     subs={"M_{ny}": flb_y.get('Mny', 0)}
 )
-st.write(f"**Design Capacity ($\phi M_{{ny}}$):** {phi_mny_flb:.2f} kip-in")
+st.latex(f"\phi M_{{ny}} = {phi_mny_flb:.2f} \\text{{ kip-in}}")
+st.latex(f"M_{{uy}} = {flb_y.get('demand', 0)} \\text{{ kip-in}}")
 result_card("Ratio", flb_y.get("ratio", 0), "", "PASS" if flb_y.get("ratio", 0) < 1.0 else "FAIL")
 
 
@@ -864,7 +1016,7 @@ pr_pc_ratio = 0
 if Pc != 0:
     pr_pc_ratio = Pr / Pc
 
-st.write(f"**Axial Ratio ($P_r / P_c$):** {Pr} / {Pc} = {pr_pc_ratio:.3f}")
+st.latex(f"P_r / P_c = {Pr} / {Pc} = {pr_pc_ratio:.3f}")
 
 if pr_pc_ratio < 0.2:
     st.success("Since $P_r / P_c < 0.2$, Equation H1-1b applies.")
