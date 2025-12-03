@@ -691,6 +691,9 @@ default_member_data = {
             "demand": -83.49, "capacity": 633.5, "ratio": 0.132, "ref": "Cl.F6.2",
             "Mny": 703.88
         },
+        "flexure_x": {
+            "demand": 0.000, "capacity": 0.000, "ratio": 0.000, "ref": "Cl.F2.1", "Mnx": 0.00
+        },
         "flexure_y": {
             "demand": -83.49, "capacity": 634.5, "ratio": 0.132, "ref": "Cl.F6.1",
             "Mny": 705.00
