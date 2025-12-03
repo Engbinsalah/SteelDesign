@@ -1037,7 +1037,7 @@ st.write(f"**Limiting Length ($L_p$):** {ltb_x.get('Lp', 0)} in")
 # Rts
 render_latex(
     lhs="R_{ts}",
-    rhs="\\sqrt{\\frac{\\sqrt{I_y C_w}}{S_x}}",
+    rhs="\\sqrt{\\frac{\\sqrt{I_y \\times C_w}}{S_x}}",
     subs={"I_y": props.get("Iyy", {}).get("value", 0), "C_w": props.get("Cw", {}).get("value", 0), "S_x": props.get("Sxx", {}).get("value", 0)},
     ref="Eq.F2-7"
 )
