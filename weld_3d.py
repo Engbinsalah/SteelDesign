@@ -2,21 +2,9 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
-import matplotlib.pyplot as plt
-import io
-import base64
 
 # --- CONFIGURATION ---
 st.set_page_config(page_title="Weld Group Analyzer Pro", layout="wide", page_icon="🏗️")
-
-# --- UTILS FOR REPORTING ---
-def plot_to_base64(fig):
-    """Converts a matplotlib figure to a base64 string for HTML embedding."""
-    buf = io.BytesIO()
-    fig.savefig(buf, format='png', bbox_inches='tight')
-    buf.seek(0)
-    img_str = base64.b64encode(buf.read()).decode('utf-8')
-    return img_str
 
 # --- CLASS DEFINITIONS ---
 class WeldGroup:
@@ -105,10 +93,10 @@ class WeldGroup:
 
 # --- UI LAYOUT ---
 st.title("🏗️ Weld Group Analyzer Pro")
-st.markdown("Calculate capacity, visualize 3D forces, and generate detailed engineering reports.")
+st.markdown("Calculate capacity, visualize 3D forces, and print detailed reports.")
 
 # Create Main Tabs
-main_tabs = st.tabs(["1. Calculator & 2D", "2. 3D Visualization", "3. Detailed Report"])
+main_tabs = st.tabs(["1. Calculator & 2D", "2. 3D Visualization", "3. Print-Ready Report"])
 
 # --- SIDEBAR: INPUTS ---
 st.sidebar.header("1. Applied Loads")
@@ -150,7 +138,7 @@ provided_size = st.sidebar.selectbox("Provided Leg Size (in)",
 weld_group = WeldGroup()
 shape_type = st.sidebar.selectbox("Geometry Shape", ["Linear", "Rectangle (Box)", "C-Shape", "I/W-Profile", "Custom"])
 
-# Geometry Logic (Same as before)
+# Geometry Logic
 if shape_type == "Linear":
     l_len = st.sidebar.number_input("Length (in)", value=10.0)
     angle = st.sidebar.number_input("Angle (deg)", value=0.0)
@@ -210,6 +198,37 @@ if has_geom:
     cap = phi * 0.6 * F_exx * 0.7071 * provided_size
     dcr = max_force / cap if cap > 0 else 999
 
+# --- HELPER: GENERATE FIGURES ---
+def get_2d_fig():
+    fig = go.Figure()
+    for seg in weld_group.segments:
+        fig.add_trace(go.Scatter(x=[seg['x1'], seg['x2']], y=[seg['y1'], seg['y2']], mode='lines+markers', line=dict(width=4, color='#1f77b4'), name=seg['label'], showlegend=False))
+    fig.add_trace(go.Scatter(x=[props['cg_x']], y=[props['cg_y']], mode='markers', marker=dict(color='red', size=12, symbol='cross'), name='Centroid'))
+    if load_type == "Forces + Coordinates":
+        fig.add_trace(go.Scatter(x=[load_x], y=[load_y], mode='markers', marker=dict(color='green', size=10, symbol='circle-open'), name='Load Pt'))
+    fig.update_layout(xaxis_title="X (in)", yaxis_title="Y (in)", yaxis=dict(scaleanchor="x", scaleratio=1), margin=dict(l=20, r=20, t=30, b=20), height=350, title="Weld Geometry")
+    return fig
+
+def get_3d_fig():
+    fig = go.Figure()
+    # Weld Lines
+    for seg in weld_group.segments:
+        fig.add_trace(go.Scatter3d(x=[seg['x1'], seg['x2']], y=[seg['y1'], seg['y2']], z=[0, 0], mode='lines', line=dict(color='black', width=6), name=f"Weld"))
+    # Centroid
+    fig.add_trace(go.Scatter3d(x=[props['cg_x']], y=[props['cg_y']], z=[0], mode='markers', marker=dict(size=5, color='red'), name='Centroid'))
+    # Load
+    if load_type == "Forces + Coordinates":
+        fig.add_trace(go.Scatter3d(x=[load_x], y=[load_y], z=[load_z], mode='markers', marker=dict(size=6, color='blue'), name='Load Point'))
+        fig.add_trace(go.Scatter3d(x=[load_x, load_x], y=[load_y, load_y], z=[load_z, 0], mode='lines', line=dict(color='gray', dash='dash', width=2), showlegend=False))
+        # Force Vectors
+        scale = max(props['L_total']/8, 1.0)
+        if abs(P_x) > 0.01: fig.add_trace(go.Cone(x=[load_x], y=[load_y], z=[load_z], u=[P_x], v=[0], w=[0], sizemode="absolute", sizeref=scale, anchor="tail", colorscale=[[0, 'orange'],[1,'orange']], showscale=False, name='Px'))
+        if abs(P_y) > 0.01: fig.add_trace(go.Cone(x=[load_x], y=[load_y], z=[load_z], u=[0], v=[P_y], w=[0], sizemode="absolute", sizeref=scale, anchor="tail", colorscale=[[0, 'green'],[1,'green']], showscale=False, name='Py'))
+        if abs(P_z) > 0.01: fig.add_trace(go.Cone(x=[load_x], y=[load_y], z=[load_z], u=[0], v=[0], w=[P_z], sizemode="absolute", sizeref=scale, anchor="tail", colorscale=[[0, 'purple'],[1,'purple']], showscale=False, name='Pz'))
+
+    fig.update_layout(scene=dict(xaxis_title='X', yaxis_title='Y', zaxis_title='Z', aspectmode='data'), margin=dict(l=0, r=0, b=0, t=0), height=500)
+    return fig
+
 # --- TAB 1: 2D DASHBOARD ---
 with main_tabs[0]:
     if shape_type == "Custom":
@@ -224,278 +243,73 @@ with main_tabs[0]:
 
     if has_geom:
         col_res1, col_res2 = st.columns([1, 2])
-        
         with col_res2:
-            st.subheader("2D Geometry & Utilization")
-            
-            # Use Plotly 2D for better interactivity
-            fig_2d = go.Figure()
-
-            # Plot Segments (Color coded by approximate stress level if possible, else solid)
-            # Simple approach: Plot lines, and markers at ends
-            for seg in weld_group.segments:
-                fig_2d.add_trace(go.Scatter(
-                    x=[seg['x1'], seg['x2']], y=[seg['y1'], seg['y2']],
-                    mode='lines+markers', name=seg['label'],
-                    line=dict(width=5, color='royalblue')
-                ))
-
-            # Centroid
-            fig_2d.add_trace(go.Scatter(
-                x=[props['cg_x']], y=[props['cg_y']],
-                mode='markers', marker=dict(color='red', size=12, symbol='cross'),
-                name='Centroid'
-            ))
-
-            # Load Point Projection
-            if load_type == "Forces + Coordinates":
-                fig_2d.add_trace(go.Scatter(
-                    x=[load_x], y=[load_y],
-                    mode='markers', marker=dict(color='green', size=10, symbol='circle-open'),
-                    name='Load (Projected)'
-                ))
-
-            fig_2d.update_layout(
-                xaxis_title="X (in)", yaxis_title="Y (in)",
-                yaxis=dict(scaleanchor="x", scaleratio=1),
-                margin=dict(l=0, r=0, t=0, b=0),
-                height=400
-            )
-            st.plotly_chart(fig_2d, use_container_width=True)
-
+            st.plotly_chart(get_2d_fig(), use_container_width=True)
         with col_res1:
-            st.subheader("Key Results")
-            st.metric("Max Force", f"{max_force:.3f} k/in")
+            st.subheader("Results")
+            st.metric("Max Resultant Force", f"{max_force:.3f} k/in")
             st.metric(f"Capacity ({provided_size}\")", f"{cap:.3f} k/in")
             st.metric("Utilization (DCR)", f"{dcr:.3f}", "OK" if dcr <= 1.0 else "FAIL", delta_color="inverse")
             st.markdown("---")
             st.write(f"**Mx:** {loads_dict['Mx']:.2f} k-in")
             st.write(f"**My:** {loads_dict['My']:.2f} k-in")
             st.write(f"**Mz:** {loads_dict['Mz']:.2f} k-in")
+    else:
+        st.warning("Configure Geometry to see results.")
 
-# --- TAB 2: 3D VISUALIZATION (Plotly) ---
+# --- TAB 2: 3D VISUALIZATION ---
 with main_tabs[1]:
     st.header("3D Force & Geometry View")
-    
     if has_geom:
-        fig_3d = go.Figure()
+        st.plotly_chart(get_3d_fig(), use_container_width=True)
+        st.info("Left Click: Rotate | Right Click: Pan | Scroll: Zoom")
 
-        # 1. Weld Lines (on Z=0 plane)
-        for seg in weld_group.segments:
-            fig_3d.add_trace(go.Scatter3d(
-                x=[seg['x1'], seg['x2']], 
-                y=[seg['y1'], seg['y2']], 
-                z=[0, 0],
-                mode='lines',
-                line=dict(color='black', width=6),
-                name=f"Weld {seg['label']}"
-            ))
-
-        # 2. Centroid
-        fig_3d.add_trace(go.Scatter3d(
-            x=[props['cg_x']], y=[props['cg_y']], z=[0],
-            mode='markers', marker=dict(size=5, color='red'),
-            name='Centroid'
-        ))
-
-        # 3. Load Point & Force Vectors
-        if load_type == "Forces + Coordinates":
-            # Load Point Marker
-            fig_3d.add_trace(go.Scatter3d(
-                x=[load_x], y=[load_y], z=[load_z],
-                mode='markers', marker=dict(size=6, color='blue'),
-                name='Load Point'
-            ))
-            
-            # Drop line (dashed)
-            fig_3d.add_trace(go.Scatter3d(
-                x=[load_x, load_x], y=[load_y, load_y], z=[load_z, 0],
-                mode='lines', line=dict(color='gray', dash='dash', width=2),
-                showlegend=False
-            ))
-
-            # FORCE VECTORS (Cones)
-            # Scale factor for vectors visualization
-            scale = max(props['L_total']/10, 2.0) 
-
-            # Helper to add vector
-            def add_vector(u, v, w, color, name):
-                if abs(u)+abs(v)+abs(w) > 0.001:
-                    fig_3d.add_trace(go.Cone(
-                        x=[load_x], y=[load_y], z=[load_z],
-                        u=[u], v=[v], w=[w],
-                        sizemode="absolute", sizeref=scale,
-                        anchor="tail", showscale=False, colorscale=[[0, color], [1, color]],
-                        name=name
-                    ))
-
-            add_vector(P_x, 0, 0, 'orange', 'Px')
-            add_vector(0, P_y, 0, 'green', 'Py')
-            add_vector(0, 0, P_z, 'purple', 'Pz')
-
-        # Layout settings
-        fig_3d.update_layout(
-            scene=dict(
-                xaxis_title='X (in)',
-                yaxis_title='Y (in)',
-                zaxis_title='Z (in)',
-                aspectmode='data', # Keeps aspect ratio correct
-                camera=dict(eye=dict(x=1.5, y=1.5, z=1.5))
-            ),
-            margin=dict(l=0, r=0, b=0, t=0),
-            height=600,
-            showlegend=True
-        )
-        
-        st.plotly_chart(fig_3d, use_container_width=True)
-        st.info("💡 Interactive 3D View: Click and drag to rotate. Scroll to zoom.")
-
-# --- TAB 3: DETAILED REPORT ---
+# --- TAB 3: PRINT-READY REPORT ---
 with main_tabs[2]:
-    st.header("Engineering Report Generation")
-    
     if has_geom:
-        # Generate figures for the report using Matplotlib (Better for static embedding)
+        st.markdown("### 🖨️ Instructions: Press `Ctrl + P` (or Cmd + P) to Save as PDF")
+        st.divider()
         
-        # Figure 1: Geometry
-        fig1, ax1 = plt.subplots(figsize=(6, 4))
-        for seg in weld_group.segments:
-            ax1.plot([seg['x1'], seg['x2']], [seg['y1'], seg['y2']], 'b-', linewidth=2)
-        ax1.plot(props['cg_x'], props['cg_y'], 'rx', markersize=10, label='Centroid')
-        if load_type == "Forces + Coordinates":
-            ax1.plot(load_x, load_y, 'go', label='Load Pt')
-        ax1.set_title("Weld Group Geometry")
-        ax1.set_xlabel("X (in)")
-        ax1.set_ylabel("Y (in)")
-        ax1.axis('equal')
-        ax1.grid(True, linestyle='--', alpha=0.5)
-        ax1.legend()
-        img1 = plot_to_base64(fig1)
+        # Report Header
+        st.markdown(f"## Weld Group Analysis Report")
+        st.markdown(f"**Date:** {pd.Timestamp.now().strftime('%Y-%m-%d %H:%M')}")
         
-        # Figure 2: Stress Distribution
-        fig2, ax2 = plt.subplots(figsize=(8, 4))
-        # Group by segment to get max stress per segment
-        seg_max = stress_df.groupby('Segment')['f_res'].max()
-        bars = ax2.bar(seg_max.index, seg_max.values, color='orange')
-        ax2.axhline(y=cap, color='r', linestyle='--', label='Capacity')
-        ax2.set_title("Max Resultant Force per Segment")
-        ax2.set_ylabel("Force (k/in)")
-        ax2.legend()
-        plt.xticks(rotation=45)
-        img2 = plot_to_base64(fig2)
+        c1, c2 = st.columns(2)
+        with c1:
+            st.markdown("#### 1. Design Inputs")
+            st.write(f"- **Shape:** {shape_type}")
+            st.write(f"- **Electrode:** E{F_exx}XX")
+            st.write(f"- **Leg Size:** {provided_size} in")
+            st.write(f"- **Phi:** {phi}")
+        with c2:
+            st.markdown("#### 2. Applied Loads")
+            st.write(f"- **Forces:** Px={P_x}, Py={P_y}, Pz={P_z} (k)")
+            st.write(f"- **Design Mx:** {loads_dict['Mx']:.2f} k-in")
+            st.write(f"- **Design My:** {loads_dict['My']:.2f} k-in")
+            st.write(f"- **Design Mz:** {loads_dict['Mz']:.2f} k-in")
 
-        # HTML Content
-        report_html = f"""
-        <html>
-        <head>
-            <style>
-                body {{ font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; padding: 40px; color: #333; }}
-                .header {{ border-bottom: 2px solid #005a87; padding-bottom: 10px; margin-bottom: 20px; }}
-                h1 {{ color: #005a87; margin: 0; }}
-                h2 {{ color: #005a87; font-size: 1.2em; border-left: 5px solid #005a87; padding-left: 10px; margin-top: 30px; }}
-                table {{ border-collapse: collapse; width: 100%; margin-bottom: 20px; font-size: 0.9em; }}
-                th {{ background-color: #f2f2f2; text-align: left; padding: 8px; border: 1px solid #ddd; }}
-                td {{ padding: 8px; border: 1px solid #ddd; }}
-                .status-pass {{ color: green; font-weight: bold; }}
-                .status-fail {{ color: red; font-weight: bold; }}
-                .grid-container {{ display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }}
-                .img-container {{ text-align: center; margin: 20px 0; border: 1px solid #eee; padding: 10px; }}
-                img {{ max-width: 100%; height: auto; }}
-            </style>
-        </head>
-        <body>
-            <div class="header">
-                <h1>Weld Group Analysis Report</h1>
-                <p>Generated by Weld Analyzer Pro | {pd.Timestamp.now().strftime('%Y-%m-%d %H:%M')}</p>
-            </div>
+        st.markdown("#### 3. Section Properties")
+        prop_df = pd.DataFrame([{
+            "L_total": f"{props['L_total']:.2f}",
+            "Centroid": f"({props['cg_x']:.2f}, {props['cg_y']:.2f})",
+            "Ix": f"{props['I_x']:.2f}", "Iy": f"{props['I_y']:.2f}", "J": f"{props['J']:.2f}"
+        }])
+        st.dataframe(prop_df, hide_index=True)
 
-            <div class="grid-container">
-                <div>
-                    <h2>1. Design Inputs</h2>
-                    <table>
-                        <tr><th>Parameter</th><th>Value</th></tr>
-                        <tr><td>Shape</td><td>{shape_type}</td></tr>
-                        <tr><td>Electrode</td><td>E{F_exx}XX</td></tr>
-                        <tr><td>Leg Size</td><td>{provided_size} in</td></tr>
-                        <tr><td>Phi Factor</td><td>{phi}</td></tr>
-                    </table>
-                </div>
-                <div>
-                    <h2>2. Applied Loads</h2>
-                    <table>
-                        <tr><th>Force / Moment</th><th>Value</th></tr>
-                        <tr><td>Px / Py / Pz</td><td>{P_x} / {P_y} / {P_z} kips</td></tr>
-                        <tr><td>Mx (Design)</td><td>{loads_dict['Mx']:.2f} k-in</td></tr>
-                        <tr><td>My (Design)</td><td>{loads_dict['My']:.2f} k-in</td></tr>
-                        <tr><td>Mz (Design)</td><td>{loads_dict['Mz']:.2f} k-in</td></tr>
-                    </table>
-                </div>
-            </div>
+        st.markdown("#### 4. Capacity Check")
+        res_df = pd.DataFrame([{
+            "Max Force (k/in)": f"{max_force:.4f}",
+            "Capacity (k/in)": f"{cap:.4f}",
+            "DCR": f"{dcr:.3f}",
+            "Status": "✅ OK" if dcr <= 1.0 else "❌ FAIL"
+        }])
+        st.dataframe(res_df, hide_index=True)
 
-            <h2>3. Section Properties</h2>
-            <table>
-                <tr>
-                    <th>Total Length</th><th>Centroid (X, Y)</th><th>Ix</th><th>Iy</th><th>J</th>
-                </tr>
-                <tr>
-                    <td>{props['L_total']:.2f} in</td>
-                    <td>({props['cg_x']:.3f}, {props['cg_y']:.3f})</td>
-                    <td>{props['I_x']:.2f} in³</td>
-                    <td>{props['I_y']:.2f} in³</td>
-                    <td>{props['J']:.2f} in³</td>
-                </tr>
-            </table>
-
-            <h2>4. Capacity Check</h2>
-            <table>
-                <tr>
-                    <th>Metric</th><th>Value</th><th>Status</th>
-                </tr>
-                <tr>
-                    <td>Max Resultant Force</td>
-                    <td>{max_force:.4f} k/in</td>
-                    <td>-</td>
-                </tr>
-                <tr>
-                    <td>Weld Capacity</td>
-                    <td>{cap:.4f} k/in</td>
-                    <td>-</td>
-                </tr>
-                <tr>
-                    <td><b>Demand/Capacity Ratio</b></td>
-                    <td><b>{dcr:.3f}</b></td>
-                    <td class="{'status-pass' if dcr <= 1.0 else 'status-fail'}">
-                        {'OK' if dcr <= 1.0 else 'FAIL'}
-                    </td>
-                </tr>
-            </table>
-
-            <div class="grid-container">
-                <div class="img-container">
-                    <h3>Geometry Layout</h3>
-                    <img src="data:image/png;base64,{img1}" />
-                </div>
-                <div class="img-container">
-                    <h3>Stress Distribution</h3>
-                    <img src="data:image/png;base64,{img2}" />
-                </div>
-            </div>
-
-            <h2>5. Detailed Stresses</h2>
-            {stress_df.to_html(index=False, float_format=lambda x: '{:.3f}'.format(x), classes='table')}
-            
-        </body>
-        </html>
-        """
+        st.markdown("#### 5. Geometry Plot")
+        # Display the 2D figure statically
+        st.plotly_chart(get_2d_fig(), key="report_2d", use_container_width=True)
         
-        st.download_button(
-            label="📄 Download Full HTML Report",
-            data=report_html,
-            file_name="Weld_Analysis_Report.html",
-            mime="text/html"
-        )
-        st.info("Instructions: Download the file, open it in your browser, and select 'Print > Save as PDF' for a PDF version.")
-
-        # Preview the report
-        st.markdown("### Report Preview")
-        st.components.v1.html(report_html, height=600, scrolling=True)
+        st.markdown("#### 6. Detailed Stresses")
+        # Format columns for display
+        fmt_cols = ['X', 'Y', 'fx', 'fy', 'fz', 'f_res']
+        st.dataframe(stress_df.style.format({c: "{:.3f}" for c in fmt_cols}), use_container_width=True)
