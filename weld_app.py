@@ -1,7 +1,8 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-import plotly.graph_objects as go
+import matplotlib.pyplot as plt
+import matplotlib.patches as patches
 
 # --- CONFIGURATION ---
 st.set_page_config(page_title="Weld Group Analyzer", layout="wide")
@@ -21,8 +22,8 @@ class WeldGroup:
         cy = (y1 + y2) / 2
         
         # Moments of inertia of the line segment about its own centroid
-        # Ix_o = L * (dy)^2 / 12
-        # Iy_o = L * (dx)^2 / 12
+        # Ix_o = L^3 * sin^2(theta) / 12  -> simplified to L * dy^2 / 12
+        # Iy_o = L^3 * cos^2(theta) / 12  -> simplified to L * dx^2 / 12
         ix_o = length * (y2 - y1)**2 / 12
         iy_o = length * (x2 - x1)**2 / 12
         
@@ -88,11 +89,11 @@ class WeldGroup:
                 fy_tor = loads['Mz'] * rx / props['J']
                 
                 # Bending Mx (about X axis) -> Causes z stress (tension/compression)
-                # fz_mx = Mx * ry / Ix
+                # fz_mx = Mx * ry / I_x
                 fz_mx = loads['Mx'] * ry / props['I_x']
                 
                 # Bending My (about Y axis) -> Causes z stress
-                # fz_my = -My * rx / Iy
+                # fz_my = -My * rx / I_y
                 fz_my = -loads['My'] * rx / props['I_y']
                 
                 # Totals
@@ -139,12 +140,14 @@ M_x_input = 0.0
 M_y_input = 0.0
 M_z_input = 0.0
 
+load_x, load_y, load_z = 0.0, 0.0, 0.0
+
 if load_type == "Forces + Coordinates":
     st.sidebar.markdown("---")
     st.sidebar.markdown("**Load Application Point:**")
     load_x = st.sidebar.number_input("Load X (in)", value=0.0)
     load_y = st.sidebar.number_input("Load Y (in)", value=0.0)
-    load_z = st.sidebar.number_input("Load Z (in)", value=0.0, help="Distance from weld plane. Positive is usually 'above' the weld.")
+    load_z = st.sidebar.number_input("Load Z (in)", value=0.0, help="Distance from weld plane.")
     
     st.sidebar.markdown("**Additional Moments (if any):**")
     add_Mx = st.sidebar.number_input("Add'l Mx (k-in)", value=0.0)
@@ -202,7 +205,7 @@ with tabs[0]:
         col1, col2 = st.columns(2)
         width = col1.number_input("Web Depth (Y-dim) (in)", value=10.0)
         flange = col2.number_input("Flange Width (X-dim) (in)", value=5.0)
-        orientation = st.selectbox("Opening Direction", ["Right", "Left", "Up", "Down"])
+        orientation = st.selectbox("Opening Direction", ["Right", "Left"])
         
         if orientation == "Right": # [
             weld_group.add_segment(flange, width/2, 0, width/2, "Top Flange")
@@ -212,7 +215,6 @@ with tabs[0]:
             weld_group.add_segment(-flange, width/2, 0, width/2, "Top Flange")
             weld_group.add_segment(0, width/2, 0, -width/2, "Web")
             weld_group.add_segment(0, -width/2, -flange, -width/2, "Bot Flange")
-        # Add Up/Down logic if needed
             
     elif shape_type == "I/W-Profile":
         col1, col2 = st.columns(2)
@@ -221,15 +223,10 @@ with tabs[0]:
         weld_pattern = st.radio("Pattern", ["All Around (Perimeter)", "I-Shape (Flanges + Web)"])
         
         if weld_pattern == "I-Shape (Flanges + Web)":
-            # Top Flange
             weld_group.add_segment(-bf/2, depth/2, bf/2, depth/2, "Top Flange")
-            # Bot Flange
             weld_group.add_segment(-bf/2, -depth/2, bf/2, -depth/2, "Bot Flange")
-            # Web
             weld_group.add_segment(0, depth/2, 0, -depth/2, "Web")
         else:
-            # Box perimeter logic roughly
-            st.info("Simplification: Modeling outer box perimeter for 'All Around'")
             weld_group.add_segment(-bf/2, depth/2, bf/2, depth/2, "Top")
             weld_group.add_segment(bf/2, depth/2, bf/2, -depth/2, "Right")
             weld_group.add_segment(bf/2, -depth/2, -bf/2, -depth/2, "Bot")
@@ -237,7 +234,6 @@ with tabs[0]:
 
 with tabs[1]:
     st.markdown("Enter coordinates for each weld line segment.")
-    # Initialize session state for dataframe if not exists
     if 'custom_df' not in st.session_state:
         st.session_state.custom_df = pd.DataFrame(
             {'X1': [0.0], 'Y1': [0.0], 'X2': [5.0], 'Y2': [0.0]}, 
@@ -246,7 +242,6 @@ with tabs[1]:
     edited_df = st.data_editor(st.session_state.custom_df, num_rows="dynamic")
     
     if st.button("Load Custom Geometry"):
-        # Clear existing and load from DF
         weld_group = WeldGroup() # Reset
         for index, row in edited_df.iterrows():
             weld_group.add_segment(row['X1'], row['Y1'], row['X2'], row['Y2'], f"Seg {index+1}")
@@ -260,26 +255,22 @@ if has_geom:
     
     # Calculate Moments based on inputs
     if load_type == "Forces + Coordinates":
-        # M = M_added + Force * distance_to_centroid
-        # Lever arms:
-        # dx = LoadX - Cgx
-        # dy = LoadY - Cgy
-        # dz = LoadZ - 0 (assuming weld at Z=0)
-        
+        # Force * distance_to_centroid
+        # dx, dy, dz are vectors FROM Centroid TO Load Point
         dx = load_x - props['cg_x']
         dy = load_y - props['cg_y']
         dz = load_z 
         
-        # Mx (about X axis) -> Pz creates moment with dy arm, Py creates moment with dz arm
-        # RHR: +My is rotation about Y axis.
-        # Mx = Pz*dy - Py*dz
-        M_x_calc = add_Mx + (P_z * dy) - (P_y * dz)
+        # Cross product r x F
+        # r = [dx, dy, dz]
+        # F = [Px, Py, Pz]
+        # Mx = ry*Fz - rz*Fy = dy*Pz - dz*Py
+        # My = rz*Fx - rx*Fz = dz*Px - dx*Pz
+        # Mz = rx*Fy - ry*Fx = dx*Py - dy*Px
         
-        # My = Px*dz - Pz*dx
-        M_y_calc = add_My + (P_x * dz) - (P_z * dx)
-        
-        # Mz (Torsion) = Py*dx - Px*dy
-        M_z_calc = add_Mz + (P_y * dx) - (P_x * dy)
+        M_x_calc = add_Mx + (dy * P_z) - (dz * P_y)
+        M_y_calc = add_My + (dz * P_x) - (dx * P_z)
+        M_z_calc = add_Mz + (dx * P_y) - (dy * P_x)
     else:
         M_x_calc = M_x_input
         M_y_calc = M_y_input
@@ -292,45 +283,35 @@ if has_geom:
 
     stress_df, max_force = weld_group.calculate_stresses(loads_dict)
     
-    # --- VISUALIZATION ---
+    # --- VISUALIZATION (MATPLOTLIB) ---
     col_res1, col_res2 = st.columns([1, 2])
     
     with col_res2:
         st.subheader("Weld Group Visualization")
-        fig = go.Figure()
         
-        # Draw Segments
+        fig, ax = plt.subplots(figsize=(6, 5))
+        
+        # Plot Segments
         for seg in weld_group.segments:
-            fig.add_trace(go.Scatter(
-                x=[seg['x1'], seg['x2']], 
-                y=[seg['y1'], seg['y2']],
-                mode='lines+markers',
-                name=seg['label'],
-                line=dict(color='blue', width=4)
-            ))
+            ax.plot([seg['x1'], seg['x2']], [seg['y1'], seg['y2']], 
+                    marker='o', markersize=4, linewidth=3, label=seg['label'])
             
-        # Draw Centroid
-        fig.add_trace(go.Scatter(
-            x=[props['cg_x']], y=[props['cg_y']],
-            mode='markers', marker=dict(color='red', size=12, symbol='cross'),
-            name='Centroid'
-        ))
+        # Plot Centroid
+        ax.plot(props['cg_x'], props['cg_y'], 'rx', markersize=10, markeredgewidth=2, label='Centroid')
         
-        # Draw Load Point (if coord mode)
+        # Plot Load Point
         if load_type == "Forces + Coordinates":
-            fig.add_trace(go.Scatter(
-                x=[load_x], y=[load_y],
-                mode='markers', marker=dict(color='green', size=10, symbol='circle-open'),
-                name='Load Point'
-            ))
+            ax.plot(load_x, load_y, 'go', markerfacecolor='none', markersize=10, label='Load Point')
 
-        fig.update_layout(
-            xaxis_title="X (in)", yaxis_title="Y (in)",
-            axis=dict(scaleanchor="x", scaleratio=1),
-            showlegend=True,
-            height=500
-        )
-        st.plotly_chart(fig, use_container_width=True)
+        ax.set_xlabel("X (in)")
+        ax.set_ylabel("Y (in)")
+        ax.axis('equal')
+        ax.grid(True, linestyle='--', alpha=0.6)
+        # Avoid cluttering legend if too many segments
+        if len(weld_group.segments) < 10:
+            ax.legend(loc='best', fontsize='small')
+        
+        st.pyplot(fig)
 
     with col_res1:
         st.subheader("Section Properties")
@@ -346,8 +327,7 @@ if has_geom:
             ]
         }), hide_index=True)
         
-        st.subheader("Design Forces")
-        st.write(f"**Calculated Moments at Centroid:**")
+        st.subheader("Design Forces at Centroid")
         st.write(f"Mx = {loads_dict['Mx']:.2f} k-in")
         st.write(f"My = {loads_dict['My']:.2f} k-in")
         st.write(f"Mz = {loads_dict['Mz']:.2f} k-in")
@@ -362,13 +342,8 @@ if has_geom:
         st.metric("Max Resultant Force", f"{max_force:.3f} kips/in")
     
     # Capacity Calc
-    # Capacity of 1/16 leg = 0.707 * (1/16) * 0.6 * Fexx
-    # Standard engineering often uses simplified factors, but let's do exact per AISC
-    # phi * Rn = phi * Fw * Aw
-    # Required Effective Throat (te)
     # te_req = Ru / (phi * 0.6 * Fexx)
-    
-    te_req = max_force / (phi * 0.6 * F_exx)
+    te_req = max_force / (phi * 0.6 * F_exx) if (phi * F_exx) > 0 else 0
     leg_req = te_req / 0.7071
     leg_req_16ths = leg_req * 16
     
@@ -378,7 +353,7 @@ if has_geom:
     with col_c:
         # Check Provided
         capacity_per_inch = phi * 0.6 * F_exx * 0.7071 * provided_size
-        dcr = max_force / capacity_per_inch
+        dcr = max_force / capacity_per_inch if capacity_per_inch > 0 else 999
         
         status = "✅ OK" if dcr <= 1.0 else "❌ FAIL"
         st.metric("Utilization Ratio (DCR)", f"{dcr:.3f}", status)
@@ -388,4 +363,4 @@ if has_geom:
     st.dataframe(stress_df.style.format("{:.3f}"), use_container_width=True)
 
 else:
-    st.warning("Please define at least one valid weld segment.")
+    st.warning("Please define at least one valid weld segment in the Geometry tab.")
