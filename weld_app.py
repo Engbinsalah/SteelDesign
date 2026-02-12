@@ -1,8 +1,7 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-import matplotlib.pyplot as plt
-import matplotlib.patches as patches
+import altair as alt
 
 # --- CONFIGURATION ---
 st.set_page_config(page_title="Weld Group Analyzer", layout="wide")
@@ -22,8 +21,6 @@ class WeldGroup:
         cy = (y1 + y2) / 2
         
         # Moments of inertia of the line segment about its own centroid
-        # Ix_o = L^3 * sin^2(theta) / 12  -> simplified to L * dy^2 / 12
-        # Iy_o = L^3 * cos^2(theta) / 12  -> simplified to L * dx^2 / 12
         ix_o = length * (y2 - y1)**2 / 12
         iy_o = length * (x2 - x1)**2 / 12
         
@@ -48,7 +45,6 @@ class WeldGroup:
         cg_y = (df['L'] * df['cy']).sum() / total_L
         
         # Moments of Inertia about Group Centroid
-        # Ix = Sum(Ix_o + A*d^2) -> Here Area is Length
         I_x = (df['ix_o'] + df['L'] * (df['cy'] - cg_y)**2).sum()
         I_y = (df['iy_o'] + df['L'] * (df['cx'] - cg_x)**2).sum()
         J = I_x + I_y
@@ -64,36 +60,26 @@ class WeldGroup:
         return True
 
     def calculate_stresses(self, loads):
-        # loads = {'Px': 0, 'Py': 0, 'Pz': 0, 'Mx': 0, 'My': 0, 'Mz': 0}
         props = self.properties
-        
         results = []
         max_f = 0
         
         for seg in self.segments:
-            # Check stress at both start (1) and end (2) of the segment
             for pt_type, x, y in [('Start', seg['x1'], seg['y1']), ('End', seg['x2'], seg['y2'])]:
-                # Distance from CG
                 rx = x - props['cg_x']
                 ry = y - props['cg_y']
                 
-                # Direct Shear (Force / Total Length)
+                # Direct Shear
                 fx_direct = loads['Px'] / props['L_total']
                 fy_direct = loads['Py'] / props['L_total']
                 fz_direct = loads['Pz'] / props['L_total']
                 
-                # Torsion Mz (in-plane twist) -> Causes x and y shear
-                # fx_tor = -Mz * ry / J
-                # fy_tor = Mz * rx / J
+                # Torsion Mz
                 fx_tor = -loads['Mz'] * ry / props['J']
                 fy_tor = loads['Mz'] * rx / props['J']
                 
-                # Bending Mx (about X axis) -> Causes z stress (tension/compression)
-                # fz_mx = Mx * ry / I_x
+                # Bending Mx, My
                 fz_mx = loads['Mx'] * ry / props['I_x']
-                
-                # Bending My (about Y axis) -> Causes z stress
-                # fz_my = -My * rx / I_y
                 fz_my = -loads['My'] * rx / props['I_y']
                 
                 # Totals
@@ -121,246 +107,178 @@ class WeldGroup:
 # --- UI LAYOUT ---
 
 st.title("🔩 Elastic Weld Group Analysis")
-st.markdown("""
-This tool calculates the capacity of a weld group using the **Elastic Vector Method**. 
-Welds are treated as lines (zero thickness). Inputs mimic standard structural engineering workflows.
-""")
+st.markdown("Calculates capacity using the **Elastic Vector Method**.")
 
 # --- SIDEBAR: INPUTS ---
 st.sidebar.header("1. Applied Loads")
-st.sidebar.markdown("Define forces and the location where they are applied.")
-
 load_type = st.sidebar.radio("Load Input Method", ["Forces + Coordinates", "Forces + Direct Moments"])
 
 P_x = st.sidebar.number_input("Px (kips) [Shear X]", value=0.0)
 P_y = st.sidebar.number_input("Py (kips) [Shear Y]", value=0.0)
 P_z = st.sidebar.number_input("Pz (kips) [Axial Z]", value=0.0)
 
-M_x_input = 0.0
-M_y_input = 0.0
-M_z_input = 0.0
-
+M_x_input, M_y_input, M_z_input = 0.0, 0.0, 0.0
 load_x, load_y, load_z = 0.0, 0.0, 0.0
+add_Mx, add_My, add_Mz = 0.0, 0.0, 0.0
 
 if load_type == "Forces + Coordinates":
     st.sidebar.markdown("---")
     st.sidebar.markdown("**Load Application Point:**")
     load_x = st.sidebar.number_input("Load X (in)", value=0.0)
     load_y = st.sidebar.number_input("Load Y (in)", value=0.0)
-    load_z = st.sidebar.number_input("Load Z (in)", value=0.0, help="Distance from weld plane.")
+    load_z = st.sidebar.number_input("Load Z (in)", value=0.0)
     
-    st.sidebar.markdown("**Additional Moments (if any):**")
+    st.sidebar.markdown("**Additional Moments:**")
     add_Mx = st.sidebar.number_input("Add'l Mx (k-in)", value=0.0)
     add_My = st.sidebar.number_input("Add'l My (k-in)", value=0.0)
     add_Mz = st.sidebar.number_input("Add'l Mz (k-in)", value=0.0)
-
 else:
     st.sidebar.markdown("---")
-    st.sidebar.markdown("**Direct Moments at Centroid:**")
     M_x_input = st.sidebar.number_input("Mx (k-in)", value=0.0)
     M_y_input = st.sidebar.number_input("My (k-in)", value=0.0)
     M_z_input = st.sidebar.number_input("Mz (k-in)", value=0.0)
 
 st.sidebar.header("2. Weld Criteria")
 F_exx = st.sidebar.selectbox("Electrode Strength", [70, 60, 80, 90, 100], index=0)
-phi = st.sidebar.number_input("Phi (Resistance Factor)", value=0.75, help="Usually 0.75 for LRFD")
+phi = st.sidebar.number_input("Phi", value=0.75)
 provided_size = st.sidebar.selectbox("Provided Leg Size (in)", 
                                      [0.1875, 0.25, 0.3125, 0.375, 0.5, 0.625, 0.75], 
-                                     index=1, format_func=lambda x: f"{x:.4f} ({int(x*16)}/16)")
+                                     index=1)
 
 # --- MAIN: GEOMETRY ---
 st.header("2. Weld Geometry Configuration")
 
 tabs = st.tabs(["Standard Shapes", "Custom Coordinates"])
-
 weld_group = WeldGroup()
 
 with tabs[0]:
     shape_type = st.selectbox("Select Shape", ["Linear", "Rectangle (Box)", "C-Shape", "I/W-Profile"])
     
     if shape_type == "Linear":
-        col1, col2 = st.columns(2)
-        l_len = col1.number_input("Length (in)", value=10.0)
-        angle = col2.number_input("Angle (deg)", value=0.0)
+        l_len = st.number_input("Length (in)", value=10.0)
+        angle = st.number_input("Angle (deg)", value=0.0)
         rad = np.radians(angle)
-        # Centered at 0,0 for simplicity
-        x1, y1 = - (l_len/2)*np.cos(rad), - (l_len/2)*np.sin(rad)
-        x2, y2 = (l_len/2)*np.cos(rad), (l_len/2)*np.sin(rad)
-        weld_group.add_segment(x1, y1, x2, y2, "Line")
+        weld_group.add_segment(-l_len/2*np.cos(rad), -l_len/2*np.sin(rad), 
+                               l_len/2*np.cos(rad), l_len/2*np.sin(rad), "Line")
         
     elif shape_type == "Rectangle (Box)":
         col1, col2 = st.columns(2)
-        width = col1.number_input("Width (X-dim) (in)", value=10.0)
-        height = col2.number_input("Height (Y-dim) (in)", value=10.0)
-        # Top
-        weld_group.add_segment(-width/2, height/2, width/2, height/2, "Top")
-        # Right
-        weld_group.add_segment(width/2, height/2, width/2, -height/2, "Right")
-        # Bottom
-        weld_group.add_segment(width/2, -height/2, -width/2, -height/2, "Bottom")
-        # Left
-        weld_group.add_segment(-width/2, -height/2, -width/2, height/2, "Left")
+        w = col1.number_input("Width (X) (in)", value=10.0)
+        h = col2.number_input("Height (Y) (in)", value=10.0)
+        weld_group.add_segment(-w/2, h/2, w/2, h/2, "Top")
+        weld_group.add_segment(w/2, h/2, w/2, -h/2, "Right")
+        weld_group.add_segment(w/2, -h/2, -w/2, -h/2, "Bottom")
+        weld_group.add_segment(-w/2, -h/2, -w/2, h/2, "Left")
         
     elif shape_type == "C-Shape":
         col1, col2 = st.columns(2)
-        width = col1.number_input("Web Depth (Y-dim) (in)", value=10.0)
-        flange = col2.number_input("Flange Width (X-dim) (in)", value=5.0)
-        orientation = st.selectbox("Opening Direction", ["Right", "Left"])
-        
-        if orientation == "Right": # [
-            weld_group.add_segment(flange, width/2, 0, width/2, "Top Flange")
-            weld_group.add_segment(0, width/2, 0, -width/2, "Web")
-            weld_group.add_segment(0, -width/2, flange, -width/2, "Bot Flange")
-        elif orientation == "Left": # ]
-            weld_group.add_segment(-flange, width/2, 0, width/2, "Top Flange")
-            weld_group.add_segment(0, width/2, 0, -width/2, "Web")
-            weld_group.add_segment(0, -width/2, -flange, -width/2, "Bot Flange")
+        w = col1.number_input("Web Depth (Y) (in)", value=10.0)
+        f = col2.number_input("Flange Width (X) (in)", value=5.0)
+        orient = st.selectbox("Direction", ["Right", "Left"])
+        if orient == "Right":
+            weld_group.add_segment(f, w/2, 0, w/2, "Top")
+            weld_group.add_segment(0, w/2, 0, -w/2, "Web")
+            weld_group.add_segment(0, -w/2, f, -w/2, "Bot")
+        else:
+            weld_group.add_segment(-f, w/2, 0, w/2, "Top")
+            weld_group.add_segment(0, w/2, 0, -w/2, "Web")
+            weld_group.add_segment(0, -w/2, -f, -w/2, "Bot")
             
     elif shape_type == "I/W-Profile":
         col1, col2 = st.columns(2)
-        depth = col1.number_input("Depth (d) (in)", value=12.0)
-        bf = col2.number_input("Flange Width (bf) (in)", value=6.0)
-        weld_pattern = st.radio("Pattern", ["All Around (Perimeter)", "I-Shape (Flanges + Web)"])
-        
-        if weld_pattern == "I-Shape (Flanges + Web)":
-            weld_group.add_segment(-bf/2, depth/2, bf/2, depth/2, "Top Flange")
-            weld_group.add_segment(-bf/2, -depth/2, bf/2, -depth/2, "Bot Flange")
-            weld_group.add_segment(0, depth/2, 0, -depth/2, "Web")
+        d = col1.number_input("Depth (d) (in)", value=12.0)
+        bf = col2.number_input("Flange (bf) (in)", value=6.0)
+        pat = st.radio("Pattern", ["All Around", "I-Shape"])
+        if pat == "I-Shape":
+            weld_group.add_segment(-bf/2, d/2, bf/2, d/2, "Top Flg")
+            weld_group.add_segment(-bf/2, -d/2, bf/2, -d/2, "Bot Flg")
+            weld_group.add_segment(0, d/2, 0, -d/2, "Web")
         else:
-            weld_group.add_segment(-bf/2, depth/2, bf/2, depth/2, "Top")
-            weld_group.add_segment(bf/2, depth/2, bf/2, -depth/2, "Right")
-            weld_group.add_segment(bf/2, -depth/2, -bf/2, -depth/2, "Bot")
-            weld_group.add_segment(-bf/2, -depth/2, -bf/2, depth/2, "Left")
+            weld_group.add_segment(-bf/2, d/2, bf/2, d/2, "Top")
+            weld_group.add_segment(bf/2, d/2, bf/2, -d/2, "Right")
+            weld_group.add_segment(bf/2, -d/2, -bf/2, -d/2, "Bot")
+            weld_group.add_segment(-bf/2, -d/2, -bf/2, d/2, "Left")
 
 with tabs[1]:
-    st.markdown("Enter coordinates for each weld line segment.")
     if 'custom_df' not in st.session_state:
-        st.session_state.custom_df = pd.DataFrame(
-            {'X1': [0.0], 'Y1': [0.0], 'X2': [5.0], 'Y2': [0.0]}, 
-        )
-    
+        st.session_state.custom_df = pd.DataFrame({'X1': [0.0], 'Y1': [0.0], 'X2': [5.0], 'Y2': [0.0]})
     edited_df = st.data_editor(st.session_state.custom_df, num_rows="dynamic")
-    
-    if st.button("Load Custom Geometry"):
-        weld_group = WeldGroup() # Reset
-        for index, row in edited_df.iterrows():
-            weld_group.add_segment(row['X1'], row['Y1'], row['X2'], row['Y2'], f"Seg {index+1}")
+    if st.button("Load Custom"):
+        weld_group = WeldGroup()
+        for idx, row in edited_df.iterrows():
+            weld_group.add_segment(row['X1'], row['Y1'], row['X2'], row['Y2'], f"Seg {idx+1}")
 
 # --- CALCULATION ---
-
 has_geom = weld_group.calculate_properties()
 
 if has_geom:
     props = weld_group.properties
     
-    # Calculate Moments based on inputs
     if load_type == "Forces + Coordinates":
-        # Force * distance_to_centroid
-        # dx, dy, dz are vectors FROM Centroid TO Load Point
-        dx = load_x - props['cg_x']
-        dy = load_y - props['cg_y']
-        dz = load_z 
-        
-        # Cross product r x F
-        # r = [dx, dy, dz]
-        # F = [Px, Py, Pz]
-        # Mx = ry*Fz - rz*Fy = dy*Pz - dz*Py
-        # My = rz*Fx - rx*Fz = dz*Px - dx*Pz
-        # Mz = rx*Fy - ry*Fx = dx*Py - dy*Px
-        
+        dx, dy, dz = load_x - props['cg_x'], load_y - props['cg_y'], load_z
         M_x_calc = add_Mx + (dy * P_z) - (dz * P_y)
         M_y_calc = add_My + (dz * P_x) - (dx * P_z)
         M_z_calc = add_Mz + (dx * P_y) - (dy * P_x)
     else:
-        M_x_calc = M_x_input
-        M_y_calc = M_y_input
-        M_z_calc = M_z_input
+        M_x_calc, M_y_calc, M_z_calc = M_x_input, M_y_input, M_z_input
 
-    loads_dict = {
-        'Px': P_x, 'Py': P_y, 'Pz': P_z,
-        'Mx': M_x_calc, 'My': M_y_calc, 'Mz': M_z_calc
-    }
-
+    loads_dict = {'Px': P_x, 'Py': P_y, 'Pz': P_z, 'Mx': M_x_calc, 'My': M_y_calc, 'Mz': M_z_calc}
     stress_df, max_force = weld_group.calculate_stresses(loads_dict)
     
-    # --- VISUALIZATION (MATPLOTLIB) ---
     col_res1, col_res2 = st.columns([1, 2])
     
     with col_res2:
-        st.subheader("Weld Group Visualization")
+        st.subheader("Visualization")
+        # Prepare Data for Altair
+        lines_data = []
+        for i, seg in enumerate(weld_group.segments):
+            lines_data.append({'x': seg['x1'], 'y': seg['y1'], 'group': f"Seg{i}"})
+            lines_data.append({'x': seg['x2'], 'y': seg['y2'], 'group': f"Seg{i}"})
         
-        fig, ax = plt.subplots(figsize=(6, 5))
+        df_lines = pd.DataFrame(lines_data)
         
-        # Plot Segments
-        for seg in weld_group.segments:
-            ax.plot([seg['x1'], seg['x2']], [seg['y1'], seg['y2']], 
-                    marker='o', markersize=4, linewidth=3, label=seg['label'])
-            
-        # Plot Centroid
-        ax.plot(props['cg_x'], props['cg_y'], 'rx', markersize=10, markeredgewidth=2, label='Centroid')
-        
-        # Plot Load Point
+        points_data = [{'x': props['cg_x'], 'y': props['cg_y'], 'type': 'Centroid', 'size': 100}]
         if load_type == "Forces + Coordinates":
-            ax.plot(load_x, load_y, 'go', markerfacecolor='none', markersize=10, label='Load Point')
+            points_data.append({'x': load_x, 'y': load_y, 'type': 'Load Point', 'size': 60})
+        df_points = pd.DataFrame(points_data)
 
-        ax.set_xlabel("X (in)")
-        ax.set_ylabel("Y (in)")
-        ax.axis('equal')
-        ax.grid(True, linestyle='--', alpha=0.6)
-        # Avoid cluttering legend if too many segments
-        if len(weld_group.segments) < 10:
-            ax.legend(loc='best', fontsize='small')
-        
-        st.pyplot(fig)
+        # Plot Lines
+        chart_lines = alt.Chart(df_lines).mark_line(point=True).encode(
+            x=alt.X('x', title='X (in)', scale=alt.Scale(domain=[min(df_lines.x)-5, max(df_lines.x)+5])),
+            y=alt.Y('y', title='Y (in)', scale=alt.Scale(domain=[min(df_lines.y)-5, max(df_lines.y)+5])),
+            detail='group',
+            color=alt.value('blue')
+        )
+
+        # Plot Points
+        chart_points = alt.Chart(df_points).mark_point(filled=True).encode(
+            x='x', y='y',
+            color=alt.Color('type', legend=alt.Legend(title="Points")),
+            size='size',
+            shape='type'
+        )
+
+        st.altair_chart((chart_lines + chart_points).interactive(), use_container_width=True)
 
     with col_res1:
-        st.subheader("Section Properties")
-        st.dataframe(pd.DataFrame({
-            "Property": ["Total Length", "Centroid X", "Centroid Y", "Ix", "Iy", "J (Polar)"],
-            "Value": [
-                f"{props['L_total']:.2f} in",
-                f"{props['cg_x']:.3f} in",
-                f"{props['cg_y']:.3f} in",
-                f"{props['I_x']:.2f} in³",
-                f"{props['I_y']:.2f} in³",
-                f"{props['J']:.2f} in³"
-            ]
-        }), hide_index=True)
-        
-        st.subheader("Design Forces at Centroid")
-        st.write(f"Mx = {loads_dict['Mx']:.2f} k-in")
-        st.write(f"My = {loads_dict['My']:.2f} k-in")
-        st.write(f"Mz = {loads_dict['Mz']:.2f} k-in")
+        st.subheader("Properties")
+        st.write(f"**Ix:** {props['I_x']:.2f} | **Iy:** {props['I_y']:.2f} | **J:** {props['J']:.2f}")
+        st.write(f"**Centroid:** ({props['cg_x']:.2f}, {props['cg_y']:.2f})")
+        st.write("---")
+        st.write(f"**Mx:** {loads_dict['Mx']:.2f} k-in")
+        st.write(f"**My:** {loads_dict['My']:.2f} k-in")
+        st.write(f"**Mz:** {loads_dict['Mz']:.2f} k-in")
 
-    # --- RESULTS ---
-    st.markdown("---")
-    st.header("3. Results & Capacity Check")
+    # --- CHECK ---
+    st.header("3. Results")
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Max Force", f"{max_force:.3f} k/in")
     
-    col_a, col_b, col_c = st.columns(3)
+    cap = phi * 0.6 * F_exx * 0.7071 * provided_size
+    dcr = max_force / cap if cap > 0 else 999
+    c2.metric("Capacity", f"{cap:.3f} k/in")
+    c3.metric("DCR", f"{dcr:.3f}", "OK" if dcr <= 1.0 else "FAIL")
     
-    with col_a:
-        st.metric("Max Resultant Force", f"{max_force:.3f} kips/in")
-    
-    # Capacity Calc
-    # te_req = Ru / (phi * 0.6 * Fexx)
-    te_req = max_force / (phi * 0.6 * F_exx) if (phi * F_exx) > 0 else 0
-    leg_req = te_req / 0.7071
-    leg_req_16ths = leg_req * 16
-    
-    with col_b:
-        st.metric("Required Leg Size", f"{leg_req:.4f} in", f"{leg_req_16ths:.2f} / 16ths")
-        
-    with col_c:
-        # Check Provided
-        capacity_per_inch = phi * 0.6 * F_exx * 0.7071 * provided_size
-        dcr = max_force / capacity_per_inch if capacity_per_inch > 0 else 999
-        
-        status = "✅ OK" if dcr <= 1.0 else "❌ FAIL"
-        st.metric("Utilization Ratio (DCR)", f"{dcr:.3f}", status)
-        st.write(f"Capacity of {provided_size}in leg: {capacity_per_inch:.3f} k/in")
-
-    st.subheader("Detailed Stresses per Segment End")
     st.dataframe(stress_df.style.format("{:.3f}"), use_container_width=True)
-
 else:
-    st.warning("Please define at least one valid weld segment in the Geometry tab.")
+    st.warning("Define weld geometry to see results.")
