@@ -49,13 +49,19 @@ class WeldGroup:
         I_y = (df['iy_o'] + df['L'] * (df['cx'] - cg_x)**2).sum()
         J = I_x + I_y
         
+        # Bounding Box for Visualization Scaling
+        min_x, max_x = df[['x1', 'x2']].min().min(), df[['x1', 'x2']].max().max()
+        min_y, max_y = df[['y1', 'y2']].min().min(), df[['y1', 'y2']].max().max()
+        diag = np.sqrt((max_x - min_x)**2 + (max_y - min_y)**2)
+        
         self.properties = {
             'L_total': total_L,
             'cg_x': cg_x,
             'cg_y': cg_y,
             'I_x': I_x,
             'I_y': I_y,
-            'J': J
+            'J': J,
+            'diag': diag if diag > 0 else 10.0 # Fallback for single point
         }
         return True
 
@@ -96,7 +102,7 @@ st.title("🏗️ Weld Group Analyzer Pro")
 st.markdown("Calculate capacity, visualize 3D forces, and print detailed reports.")
 
 # Create Main Tabs
-main_tabs = st.tabs(["1. Calculator & 2D", "2. 3D Visualization", "3. Print-Ready Report"])
+main_tabs = st.tabs(["1. Calculator & 2D", "2. 3D Visualization", "3. Print-Ready Report", "4. Theory"])
 
 # --- SIDEBAR: INPUTS ---
 st.sidebar.header("1. Applied Loads")
@@ -115,7 +121,7 @@ if load_type == "Forces + Coordinates":
     st.sidebar.markdown("**Load Application Point:**")
     load_x = st.sidebar.number_input("Load X (in)", value=0.0)
     load_y = st.sidebar.number_input("Load Y (in)", value=0.0)
-    load_z = st.sidebar.number_input("Load Z (in)", value=10.0, help="Distance from weld plane")
+    load_z = st.sidebar.number_input("Load Z (in)", value=2.0, help="Distance from weld plane")
     
     st.sidebar.markdown("**Additional Moments:**")
     add_Mx = st.sidebar.number_input("Add'l Mx (k-in)", value=0.0)
@@ -198,35 +204,126 @@ if has_geom:
     cap = phi * 0.6 * F_exx * 0.7071 * provided_size
     dcr = max_force / cap if cap > 0 else 999
 
-# --- HELPER: GENERATE FIGURES ---
+# --- HELPER FUNCTIONS ---
+def get_theory_markdown():
+    """Returns markdown text for theory explanations"""
+    return r"""
+    ### Elastic Vector Method Theory
+    The Elastic Vector Method treats welds as lines with zero thickness. It calculates stress based on standard mechanics of materials principles.
+    
+    **1. Centroid & Inertia**
+    
+    The centroid $(C_x, C_y)$ and Moments of Inertia ($I_x, I_y, J$) are calculated treating the weld segments as lines.
+    $$ I_x = \sum (I_{xo} + L d_y^2), \quad I_y = \sum (I_{yo} + L d_x^2), \quad J = I_x + I_y $$
+    
+    **2. Moment Translation**
+    
+    Forces applied at $(x, y, z)$ create moments about the centroid:
+    $$ M_x = P_z d_y - P_y d_z + M_{add} $$
+    $$ M_y = P_x d_z - P_z d_x + M_{add} $$
+    $$ M_z = P_y d_x - P_x d_y + M_{add} $$
+    
+    **3. Stress Components**
+    
+    Stresses are calculated at the critical points (ends) of every weld segment.
+    * **Direct Shear:** $f_{dir} = P / L_{total}$
+    * **Torsion ($M_z$):** $f_{x} = -M_z y / J, \quad f_{y} = M_z x / J$
+    * **Bending ($M_x, M_y$):** $f_{z} = (M_x y / I_x) - (M_y x / I_y)$
+    
+    **4. Resultant & Capacity**
+    
+    $$ f_{resultant} = \sqrt{(f_{x,total})^2 + (f_{y,total})^2 + (f_{z,total})^2} $$
+    $$ \phi R_n = \phi \cdot 0.6 \cdot F_{EXX} \cdot 0.707 \cdot w $$
+    """
+
 def get_2d_fig():
     fig = go.Figure()
+    # Plot segments, color by stress if available could be an upgrade, for now solid blue
     for seg in weld_group.segments:
-        fig.add_trace(go.Scatter(x=[seg['x1'], seg['x2']], y=[seg['y1'], seg['y2']], mode='lines+markers', line=dict(width=4, color='#1f77b4'), name=seg['label'], showlegend=False))
-    fig.add_trace(go.Scatter(x=[props['cg_x']], y=[props['cg_y']], mode='markers', marker=dict(color='red', size=12, symbol='cross'), name='Centroid'))
+        fig.add_trace(go.Scatter(x=[seg['x1'], seg['x2']], y=[seg['y1'], seg['y2']], 
+                                mode='lines+markers', 
+                                line=dict(width=5, color='#005a87'), # Steel Blue
+                                marker=dict(size=8, color='#005a87'),
+                                name=seg['label'], showlegend=False))
+    
+    # Centroid
+    fig.add_trace(go.Scatter(x=[props['cg_x']], y=[props['cg_y']], 
+                            mode='markers', marker=dict(color='red', size=15, symbol='cross'), 
+                            name='Centroid'))
+    
     if load_type == "Forces + Coordinates":
-        fig.add_trace(go.Scatter(x=[load_x], y=[load_y], mode='markers', marker=dict(color='green', size=10, symbol='circle-open'), name='Load Pt'))
-    fig.update_layout(xaxis_title="X (in)", yaxis_title="Y (in)", yaxis=dict(scaleanchor="x", scaleratio=1), margin=dict(l=20, r=20, t=30, b=20), height=350, title="Weld Geometry")
+        fig.add_trace(go.Scatter(x=[load_x], y=[load_y], 
+                                mode='markers', marker=dict(color='green', size=12, symbol='circle-open', line=dict(width=2)), 
+                                name='Load Pt (Proj)'))
+        
+    fig.update_layout(xaxis_title="X (in)", yaxis_title="Y (in)", 
+                      yaxis=dict(scaleanchor="x", scaleratio=1), 
+                      margin=dict(l=40, r=40, t=40, b=40), height=400, 
+                      title="Weld Geometry (Plan View)",
+                      plot_bgcolor='#f9f9f9')
     return fig
 
 def get_3d_fig():
     fig = go.Figure()
-    # Weld Lines
+    
+    # 1. Weld Lines (on Z=0 plane)
     for seg in weld_group.segments:
-        fig.add_trace(go.Scatter3d(x=[seg['x1'], seg['x2']], y=[seg['y1'], seg['y2']], z=[0, 0], mode='lines', line=dict(color='black', width=6), name=f"Weld"))
-    # Centroid
-    fig.add_trace(go.Scatter3d(x=[props['cg_x']], y=[props['cg_y']], z=[0], mode='markers', marker=dict(size=5, color='red'), name='Centroid'))
-    # Load
-    if load_type == "Forces + Coordinates":
-        fig.add_trace(go.Scatter3d(x=[load_x], y=[load_y], z=[load_z], mode='markers', marker=dict(size=6, color='blue'), name='Load Point'))
-        fig.add_trace(go.Scatter3d(x=[load_x, load_x], y=[load_y, load_y], z=[load_z, 0], mode='lines', line=dict(color='gray', dash='dash', width=2), showlegend=False))
-        # Force Vectors
-        scale = max(props['L_total']/8, 1.0)
-        if abs(P_x) > 0.01: fig.add_trace(go.Cone(x=[load_x], y=[load_y], z=[load_z], u=[P_x], v=[0], w=[0], sizemode="absolute", sizeref=scale, anchor="tail", colorscale=[[0, 'orange'],[1,'orange']], showscale=False, name='Px'))
-        if abs(P_y) > 0.01: fig.add_trace(go.Cone(x=[load_x], y=[load_y], z=[load_z], u=[0], v=[P_y], w=[0], sizemode="absolute", sizeref=scale, anchor="tail", colorscale=[[0, 'green'],[1,'green']], showscale=False, name='Py'))
-        if abs(P_z) > 0.01: fig.add_trace(go.Cone(x=[load_x], y=[load_y], z=[load_z], u=[0], v=[0], w=[P_z], sizemode="absolute", sizeref=scale, anchor="tail", colorscale=[[0, 'purple'],[1,'purple']], showscale=False, name='Pz'))
+        fig.add_trace(go.Scatter3d(x=[seg['x1'], seg['x2']], y=[seg['y1'], seg['y2']], z=[0, 0], 
+                                   mode='lines+markers', 
+                                   line=dict(color='black', width=10),
+                                   marker=dict(size=4, color='black'),
+                                   name=f"Weld"))
 
-    fig.update_layout(scene=dict(xaxis_title='X', yaxis_title='Y', zaxis_title='Z', aspectmode='data'), margin=dict(l=0, r=0, b=0, t=0), height=500)
+    # 2. Centroid
+    fig.add_trace(go.Scatter3d(x=[props['cg_x']], y=[props['cg_y']], z=[0], 
+                               mode='markers', marker=dict(size=6, color='red'), name='Centroid'))
+
+    # 3. Load Point & Forces
+    if load_type == "Forces + Coordinates":
+        # Load Point Marker
+        fig.add_trace(go.Scatter3d(x=[load_x], y=[load_y], z=[load_z], 
+                                   mode='markers', marker=dict(size=8, color='blue'), name='Load Point'))
+        
+        # Drop line (dashed)
+        fig.add_trace(go.Scatter3d(x=[load_x, load_x], y=[load_y, load_y], z=[load_z, 0], 
+                                   mode='lines', line=dict(color='gray', dash='dash', width=4), 
+                                   name='Height Ref'))
+
+        # SMART ARROW SCALING
+        # Use the diagonal of the weld group (props['diag']) to size arrows proportionally
+        # If diag is small, use a minimum size so arrows don't vanish
+        scale_ref = max(props['diag'] * 0.3, 2.0) 
+        
+        # Helper to add scaled cone
+        def add_arrow(u, v, w, color, name):
+            if abs(u)+abs(v)+abs(w) > 0.001:
+                fig.add_trace(go.Cone(
+                    x=[load_x], y=[load_y], z=[load_z],
+                    u=[u], v=[v], w=[w],
+                    sizemode="absolute", 
+                    sizeref=scale_ref / 3, # Adjust divisor to tune visual size
+                    anchor="tail", 
+                    colorscale=[[0, color], [1, color]], 
+                    showscale=False, 
+                    name=name,
+                    hoverinfo='name+u+v+w'
+                ))
+
+        add_arrow(P_x, 0, 0, '#FFA500', f'Px ({P_x}k)') # Orange
+        add_arrow(0, P_y, 0, '#008000', f'Py ({P_y}k)') # Green
+        add_arrow(0, 0, P_z, '#800080', f'Pz ({P_z}k)') # Purple
+
+    fig.update_layout(
+        scene=dict(
+            xaxis=dict(title='X (in)', backgroundcolor="rgb(240, 240, 240)"),
+            yaxis=dict(title='Y (in)', backgroundcolor="rgb(240, 240, 240)"),
+            zaxis=dict(title='Z (in)', backgroundcolor="rgb(230, 230, 230)"),
+            aspectmode='data', # Ensures true engineering aspect ratio
+            camera=dict(eye=dict(x=1.6, y=1.6, z=1.2))
+        ),
+        margin=dict(l=0, r=0, b=0, t=0),
+        height=600
+    )
     return fig
 
 # --- TAB 1: 2D DASHBOARD ---
@@ -262,18 +359,16 @@ with main_tabs[1]:
     st.header("3D Force & Geometry View")
     if has_geom:
         st.plotly_chart(get_3d_fig(), use_container_width=True)
-        st.info("Left Click: Rotate | Right Click: Pan | Scroll: Zoom")
+        st.info("💡 **Navigation:** Left Click to Rotate | Right Click to Pan | Scroll to Zoom. \n\n**Visuals:** The arrow sizes are scaled relative to your section dimensions for clarity.")
 
 # --- TAB 3: PRINT-READY REPORT ---
 with main_tabs[2]:
     if has_geom:
-        st.markdown("### 🖨️ Instructions: Press `Ctrl + P` (or Cmd + P) to Save as PDF")
+        st.markdown("### 🖨️ Weld Analysis Report")
+        st.caption("Instruction: Press Ctrl+P to save this page as PDF.")
         st.divider()
         
         # Report Header
-        st.markdown(f"## Weld Group Analysis Report")
-        st.markdown(f"**Date:** {pd.Timestamp.now().strftime('%Y-%m-%d %H:%M')}")
-        
         c1, c2 = st.columns(2)
         with c1:
             st.markdown("#### 1. Design Inputs")
@@ -306,10 +401,16 @@ with main_tabs[2]:
         st.dataframe(res_df, hide_index=True)
 
         st.markdown("#### 5. Geometry Plot")
-        # Display the 2D figure statically
         st.plotly_chart(get_2d_fig(), key="report_2d", use_container_width=True)
         
         st.markdown("#### 6. Detailed Stresses")
-        # Format columns for display
         fmt_cols = ['X', 'Y', 'fx', 'fy', 'fz', 'f_res']
         st.dataframe(stress_df.style.format({c: "{:.3f}" for c in fmt_cols}), use_container_width=True)
+
+        st.divider()
+        st.markdown("#### 7. Theory Summary")
+        st.markdown(get_theory_markdown())
+
+# --- TAB 4: THEORY ---
+with main_tabs[3]:
+    st.markdown(get_theory_markdown())
